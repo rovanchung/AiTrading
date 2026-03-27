@@ -9,8 +9,9 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-import yfinance as yf
 import pandas as pd
+
+from core.yf_helpers import yf_download
 
 logger = logging.getLogger("aitrading.analyzer.economic")
 
@@ -141,30 +142,24 @@ class MacroAnalyzer:
 
     def _get_vix(self) -> float:
         """Fetch current VIX (CBOE Volatility Index)."""
-        try:
-            df = yf.download("^VIX", period="5d", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
-            if not df.empty:
-                return float(df["Close"].iloc[-1])
-        except Exception as e:
-            logger.warning(f"Failed to fetch VIX: {e}")
+        df = yf_download("^VIX", period="5d")
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        if not df.empty:
+            return float(df["Close"].iloc[-1])
         return 20.0  # Historical average as fallback
 
     def _get_yield_spread(self) -> float:
         """Fetch 10Y-2Y treasury spread (yield curve)."""
-        try:
-            tnx = yf.download("^TNX", period="5d", progress=False)  # 10Y yield
-            twy = yf.download("^IRX", period="5d", progress=False)  # 13-week T-bill (proxy for short end)
-            for df in [tnx, twy]:
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = df.columns.droplevel(1)
-            if not tnx.empty and not twy.empty:
-                y10 = float(tnx["Close"].iloc[-1])
-                y_short = float(twy["Close"].iloc[-1])
-                return y10 - y_short
-        except Exception as e:
-            logger.warning(f"Failed to fetch yield spread: {e}")
+        tnx = yf_download("^TNX", period="5d")  # 10Y yield
+        twy = yf_download("^IRX", period="5d")  # 13-week T-bill (proxy for short end)
+        for df in [tnx, twy]:
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(1)
+        if not tnx.empty and not twy.empty:
+            y10 = float(tnx["Close"].iloc[-1])
+            y_short = float(twy["Close"].iloc[-1])
+            return y10 - y_short
         return 0.5  # Mild positive slope as fallback
 
     def _get_market_breadth(self) -> float:
@@ -173,55 +168,48 @@ class MacroAnalyzer:
         Uses a sample of sector ETFs as a proxy for full breadth calculation.
         """
         sector_etfs = ["XLK", "XLF", "XLE", "XLV", "XLI", "XLC", "XLY", "XLP", "XLU", "XLRE", "XLB"]
-        try:
-            df = yf.download(sector_etfs, period="1y", progress=False, group_by="ticker")
-            above_200 = 0
-            total = 0
-            for etf in sector_etfs:
-                try:
-                    if etf in df.columns.get_level_values(0):
-                        etf_df = df[etf].dropna()
-                        if len(etf_df) >= 200:
-                            sma200 = etf_df["Close"].rolling(200).mean().iloc[-1]
-                            if etf_df["Close"].iloc[-1] > sma200:
-                                above_200 += 1
-                            total += 1
-                except (KeyError, TypeError):
-                    continue
-            if total > 0:
-                return (above_200 / total) * 100
-        except Exception as e:
-            logger.warning(f"Failed to compute breadth: {e}")
+        df = yf_download(sector_etfs, period="1y", group_by="ticker", timeout=20)
+        if df.empty:
+            return 60.0  # Neutral fallback
+        above_200 = 0
+        total = 0
+        for etf in sector_etfs:
+            try:
+                if etf in df.columns.get_level_values(0):
+                    etf_df = df[etf].dropna()
+                    if len(etf_df) >= 200:
+                        sma200 = etf_df["Close"].rolling(200).mean().iloc[-1]
+                        if etf_df["Close"].iloc[-1] > sma200:
+                            above_200 += 1
+                        total += 1
+            except (KeyError, TypeError):
+                continue
+        if total > 0:
+            return (above_200 / total) * 100
         return 60.0  # Neutral fallback
 
     def _get_spy_trend(self) -> dict:
         """Check SPY's position relative to its 200-day SMA."""
-        try:
-            df = yf.download("SPY", period="1y", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
-            if not df.empty and len(df) >= 200:
-                sma200 = df["Close"].rolling(200).mean().iloc[-1]
-                current = df["Close"].iloc[-1]
-                distance = (current - sma200) / sma200 * 100
-                return {"above_200sma": current > sma200, "distance_pct": round(distance, 2)}
-        except Exception as e:
-            logger.warning(f"Failed to fetch SPY trend: {e}")
+        df = yf_download("SPY", period="1y")
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        if not df.empty and len(df) >= 200:
+            sma200 = df["Close"].rolling(200).mean().iloc[-1]
+            current = df["Close"].iloc[-1]
+            distance = (current - sma200) / sma200 * 100
+            return {"above_200sma": current > sma200, "distance_pct": round(distance, 2)}
         return {"above_200sma": True, "distance_pct": 0.0}
 
     def _get_rate_trend(self) -> dict:
         """Check if interest rates are rising or falling over 3 months."""
-        try:
-            df = yf.download("^TNX", period="3mo", progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
-            if not df.empty and len(df) >= 20:
-                start = df["Close"].iloc[0]
-                end = df["Close"].iloc[-1]
-                change = end - start
-                return {"rising": change > 0.1, "change_pct": round(change, 2)}
-        except Exception as e:
-            logger.warning(f"Failed to fetch rate trend: {e}")
+        df = yf_download("^TNX", period="3mo")
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        if not df.empty and len(df) >= 20:
+            start = df["Close"].iloc[0]
+            end = df["Close"].iloc[-1]
+            change = end - start
+            return {"rising": change > 0.1, "change_pct": round(change, 2)}
         return {"rising": False, "change_pct": 0.0}
 
     # --- Scorers (each returns 0-100) ---

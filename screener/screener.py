@@ -4,9 +4,9 @@ import logging
 from typing import Optional
 
 import pandas as pd
-import yfinance as yf
 
 from core.config import Config
+from core.yf_helpers import yf_download
 from core.database import Database
 from screener.universe import get_universe_tickers
 from screener.filters import filter_volume, filter_moving_average, filter_relative_strength
@@ -73,13 +73,8 @@ class StockScreener:
     def _fetch_data(self, tickers: list[str]) -> dict[str, pd.DataFrame]:
         """Batch download OHLCV data using yfinance."""
         period = self.config.get("data.history_period", "3mo")
-        try:
-            raw = yf.download(
-                tickers, period=period, group_by="ticker",
-                threads=True, progress=False,
-            )
-        except Exception as e:
-            logger.error(f"yfinance download failed: {e}")
+        raw = yf_download(tickers, period=period, group_by="ticker", threads=True, timeout=30)
+        if raw.empty:
             return {}
 
         data = {}
@@ -108,15 +103,10 @@ class StockScreener:
     def _fetch_single(self, ticker: str) -> pd.DataFrame:
         """Fetch data for a single ticker."""
         period = self.config.get("data.history_period", "3mo")
-        try:
-            df = yf.download(ticker, period=period, progress=False)
-            if isinstance(df.columns, pd.MultiIndex):
-                # yfinance puts ('Close', 'TICKER') — drop the ticker level
-                df.columns = df.columns.droplevel(1)
-            return df
-        except Exception as e:
-            logger.error(f"Failed to fetch {ticker}: {e}")
-            return pd.DataFrame()
+        df = yf_download(ticker, period=period)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        return df
 
     def _passes_price_filter(self, df: pd.DataFrame) -> bool:
         """Check if latest close is within configured price range."""

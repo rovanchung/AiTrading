@@ -4,12 +4,9 @@ trading:
   cash_reserve_pct: 0.20
   risk_per_trade_pct: 0.02
   buy_threshold: 65
-  sell_threshold: 40
   stop_loss_pct: 0.05
   trailing_stop_pct: 0.03
   take_profit_pct: 0.15
-  stagnation_days: 10
-  stagnation_min_gain: 0.01
   max_sector_pct: 0.30
   drawdown_reduce_pct: 0.10
   drawdown_liquidate_pct: 0.15
@@ -32,9 +29,11 @@ screener:
 schedule:
   market_open: "09:30"
   market_close: "16:00"
+  prep_minutes_before_open: 5
   scan_interval_minutes: 60
+  rerank_interval_minutes: 10
+  shortlist_size: 50
   monitor_interval_seconds: 30
-  rescore_interval_minutes: 15
 
 data:
   primary: "yfinance"

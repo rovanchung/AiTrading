@@ -93,10 +93,22 @@ cmd_info() {
     Starts the APScheduler and runs until killed (Ctrl+C for graceful shutdown).
 
     Scheduled jobs:
-      Pre-market prep    9:00 AM ET, Mon–Fri       Refresh S&P 500 universe
-      Full cycle         Hourly, 9:35 AM–3:35 PM   Screen → Analyze → Trade
-      Position monitor   Every 30 seconds           Check stops, trailing stops, take-profit
-      Re-score holdings  Every 15 minutes           Detect score decay in held positions
+      Job                  Schedule                        Duration  Config key                          What it does
+      Pre-market prep      9:25 AM ET, Mon-Fri             ~30s      schedule.prep_minutes_before_open   Full universe scan, score, cache shortlist
+      Market open execute  9:29 AM ET, retries til success  ~2-5s     schedule.market_open                Trade at open using cached analysis
+      Full cycle           Hourly at :28, 10-3 PM ET        ~20-30s   schedule.scan_interval_minutes      Full universe screen, Analyze, Buy/Sell
+      Re-rank shortlist    Every 15 min                      ~5-10s    schedule.rerank_interval_minutes    Re-score top ~50 + held, rebalance
+      Position monitor     Every 30 seconds                  ~1-2s     schedule.monitor_interval_seconds   Check stop-loss, trailing stop, take-profit
+
+    Full cycles (pre-market + hourly) scan all ~500 S&P 500 stocks and cache the
+    top ~50 as a shortlist. Between full cycles, re-rank only re-fetches and re-scores
+    this shortlist (~50 tickers + held positions) — same evaluation logic, 10x faster.
+
+    Portfolio always reflects universal ranking. No separate "score decay" logic —
+    if a held stock drops in ranking and a better candidate exists, it's replaced.
+
+    The trading portion (get positions + execute orders) is atomic — a shared lock
+    prevents concurrent position reads and order execution across all jobs.
 
   SCANNING
   --------
@@ -112,7 +124,7 @@ cmd_info() {
   Trading:
     max_positions: 10        Max simultaneous positions
     buy_threshold: 65        Min composite score to buy
-    sell_threshold: 40       Sell when score drops below
+    (sells based on universal ranking — no separate threshold)
     stop_loss_pct: 0.05      5% hard stop-loss
     trailing_stop_pct: 0.03  3% trailing stop from peak
     take_profit_pct: 0.15    15% take-profit

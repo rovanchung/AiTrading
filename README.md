@@ -9,7 +9,22 @@ Automated stock trading system that scans the S&P 500, scores stocks across tech
 3. Run `./aitrade` and select **Setup database**
 4. Run `./aitrade` and select **Dry run** to verify everything works
 
-For detailed information on operation modes, scheduler jobs, configuration, and safety features, run `./aitrade info`.
+For detailed information on operation modes, configuration, and safety features, run `./aitrade info`.
+
+## Scheduler Jobs
+
+In continuous mode (`./aitrade run`), the system runs these jobs automatically:
+
+| Job | Schedule | Duration | Config key | What it does |
+|-----|----------|----------|------------|--------------|
+| Pre-market prep | 9:25 AM ET, Mon–Fri | ~30s | `schedule.prep_minutes_before_open` | Refresh universe, macro, screen all ~500, score, cache shortlist |
+| Full cycle | Hourly at :00, 10 AM–3 PM ET | ~20–30s | `schedule.market_open`, `schedule.market_close` | Full universe screen → Analyze → Buy/Sell (retries up to 12 min) |
+| Re-rank shortlist | Every 10 min, 9:29:50 AM–3:59 PM ET | ~5–10s | `schedule.rerank_interval_minutes` | Re-score top ~50 + held stocks, rebalance portfolio |
+| Position monitor | Every 30 sec | ~1–2s | `schedule.monitor_interval_seconds` | Check stop-loss, trailing stop, take-profit |
+
+The first re-rank fires at 9:29:50 AM, completes analysis pre-open, and defers trade execution to exactly 9:30 AM via a timer. Subsequent re-ranks run every 10 minutes throughout the trading day. Full cycles refresh the entire universe hourly.
+
+The portfolio always reflects the best available stocks from universal ranking — there is no separate "score decay" logic. If a held stock drops in ranking and a better candidate exists, it gets replaced automatically. The trading portion (get positions + execute orders) is atomic across all jobs via a shared lock.
 
 ## Configuration
 

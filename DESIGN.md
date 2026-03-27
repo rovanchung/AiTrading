@@ -107,12 +107,13 @@ Real-time position protection.
 ### orchestrator/
 Ties everything together.
 
-- **pipeline.py** — `run_full_cycle()`: macro assess → screen → analyze → evaluate → execute. `rescore_holdings()`: re-score existing positions for decay detection. `pre_market_prep()`: refresh universe + macro assessment.
+- **pipeline.py** — `pre_market_prep()`: refresh universe + macro + full scan + score + cache shortlist. `execute_open()`: trade at market open using cached analysis. `run_full_cycle()`: full universe screen → analyze → evaluate → execute. `run_rerank_cycle()`: re-score cached shortlist (~50 tickers + held positions) and rebalance. All trade execution goes through `_atomic_evaluate_and_execute()` under a shared lock.
 - **scheduler.py** — APScheduler jobs:
-  - Pre-market prep: 9:00 AM ET
-  - Full cycle: hourly 9:35 AM–3:35 PM ET
+  - Pre-market prep: 9:25 AM ET (full universe scan + cache)
+  - Market open execute: 9:29 AM ET (retries until market opens)
+  - Full cycle: hourly at :28, 10–3 PM ET (retries until :40)
+  - Re-rank shortlist: every 15 min (re-score top ~50 + held)
   - Position monitor: every 30s
-  - Re-score holdings: every 15 min
 
 ## Economic/Macro Analysis (Portfolio Overlay)
 

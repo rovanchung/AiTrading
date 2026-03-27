@@ -1,6 +1,10 @@
 """Real-time position monitoring."""
 
+from __future__ import annotations
+
 import logging
+import threading
+import time
 
 from core.config import Config
 from core.database import Database
@@ -24,12 +28,14 @@ class PositionMonitor:
         broker: AlpacaClient,
         order_mgr: OrderManager,
         alerts: AlertManager,
+        trade_lock: threading.Lock | None = None,
     ):
         self.config = config
         self.db = db
         self.broker = broker
         self.order_mgr = order_mgr
         self.alerts = alerts
+        self._trade_lock = trade_lock or threading.Lock()
 
     def check_positions(self):
         """
@@ -42,6 +48,8 @@ class PositionMonitor:
         positions = self.db.get_open_positions()
         if not positions:
             return
+
+        t0 = time.time()
 
         # Get live position data from Alpaca
         try:
@@ -73,28 +81,31 @@ class PositionMonitor:
             if signal:
                 self._execute_exit(pos, signal, current_price)
 
+        logger.debug(f"Position check complete ({time.time() - t0:.1f}s)")
+
     def _execute_exit(self, pos, signal: Signal, current_price: float):
-        """Execute a stop/TP triggered sell."""
+        """Execute a stop/TP triggered sell. Acquires trade lock for atomicity."""
         logger.info(f"Executing exit for {pos.ticker}: {signal.reason}")
 
-        order = self.order_mgr.execute_signal(signal, current_price)
+        with self._trade_lock:
+            order = self.order_mgr.execute_signal(signal, current_price)
 
-        if order.status != "failed":
-            fill_price = order.filled_price or current_price
-            self.db.close_position(pos.id, fill_price, signal.reason)
-            pnl = (fill_price - pos.entry_price) * pos.qty
-            pnl_pct = ((fill_price - pos.entry_price) / pos.entry_price) * 100
-            txn_logger.info(
-                f"EXIT | {pos.ticker} | qty={pos.qty} | "
-                f"entry={pos.entry_price:.2f} | exit={fill_price:.2f} | "
-                f"pnl=${pnl:.2f} ({pnl_pct:+.1f}%) | reason={signal.reason}"
-            )
-            self.alerts.position_closed(
-                pos.ticker, pos.qty, fill_price, signal.reason, pnl
-            )
-            self.alerts.stop_triggered(pos.ticker, signal.reason, current_price)
-        else:
-            self.alerts.order_failed(pos.ticker, order.error_message)
+            if order.status != "failed":
+                fill_price = order.filled_price or current_price
+                self.db.close_position(pos.id, fill_price, signal.reason)
+                pnl = (fill_price - pos.entry_price) * pos.qty
+                pnl_pct = ((fill_price - pos.entry_price) / pos.entry_price) * 100
+                txn_logger.info(
+                    f"EXIT | {pos.ticker} | qty={pos.qty} | "
+                    f"entry={pos.entry_price:.2f} | exit={fill_price:.2f} | "
+                    f"pnl=${pnl:.2f} ({pnl_pct:+.1f}%) | reason={signal.reason}"
+                )
+                self.alerts.position_closed(
+                    pos.ticker, pos.qty, fill_price, signal.reason, pnl
+                )
+                self.alerts.stop_triggered(pos.ticker, signal.reason, current_price)
+            else:
+                self.alerts.order_failed(pos.ticker, order.error_message)
 
     def get_portfolio_summary(self) -> dict:
         """Get a summary of the current portfolio state."""

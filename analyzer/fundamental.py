@@ -2,7 +2,7 @@
 
 import logging
 
-import yfinance as yf
+from core.yf_helpers import yf_ticker_info
 
 logger = logging.getLogger("aitrading.analyzer.fundamental")
 
@@ -21,11 +21,9 @@ def compute_fundamental_score(ticker: str) -> tuple[float, dict]:
     score = 0.0
     details = {}
 
-    try:
-        info = yf.Ticker(ticker).info
-    except Exception as e:
-        logger.warning(f"Failed to fetch fundamentals for {ticker}: {e}")
-        return 50.0, {"error": str(e)}  # Neutral score on failure
+    info = yf_ticker_info(ticker)
+    if not info:
+        return 50.0, {"error": "fetch failed"}  # Neutral score on failure
 
     # --- Valuation (35 points) ---
     pe = info.get("trailingPE") or info.get("forwardPE")

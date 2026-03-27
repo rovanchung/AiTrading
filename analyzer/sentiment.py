@@ -2,7 +2,7 @@
 
 import logging
 
-import yfinance as yf
+from core.yf_helpers import yf_ticker_news
 
 logger = logging.getLogger("aitrading.analyzer.sentiment")
 
@@ -32,12 +32,7 @@ def compute_sentiment_score(ticker: str) -> tuple[float, dict]:
     """
     details = {"headlines_analyzed": 0, "positive_hits": 0, "negative_hits": 0}
 
-    try:
-        news = yf.Ticker(ticker).news
-    except Exception as e:
-        logger.warning(f"Failed to fetch news for {ticker}: {e}")
-        return 50.0, {"error": str(e)}
-
+    news = yf_ticker_news(ticker)
     if not news:
         return 50.0, {"note": "no news available"}
 

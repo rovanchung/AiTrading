@@ -5,7 +5,6 @@ import io
 from urllib.request import Request, urlopen
 
 import pandas as pd
-import yfinance as yf
 
 from core.database import Database
 

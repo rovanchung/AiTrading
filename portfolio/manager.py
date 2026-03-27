@@ -103,51 +103,64 @@ class PortfolioManager:
     def _evaluate_sells(
         self, candidates: list[ScoreResult], positions: list[Position]
     ) -> list[Signal]:
-        """Check each position for sell conditions."""
+        """Sell positions that no longer rank in the top N candidates.
+
+        Pure ranking-based: if a held stock falls below the buy threshold
+        or is outranked by a non-held candidate, sell it to make room.
+        """
         signals = []
+        buy_threshold = self._get_effective_param("buy_threshold", 65)
+        max_positions = self._get_effective_param("max_positions", 10)
         score_map = {c.ticker: c for c in candidates}
+        held_tickers = {p.ticker for p in positions}
+
+        # Build the ideal portfolio: top N qualifying candidates from universal ranking
+        ideal_tickers = set()
+        for c in candidates:
+            if len(ideal_tickers) >= max_positions:
+                break
+            if c.composite >= buy_threshold and c.technical >= 50:
+                ideal_tickers.add(c.ticker)
 
         for pos in positions:
             score = score_map.get(pos.ticker)
 
-            # Score decay
-            if score and score.composite < self.tc.get("sell_threshold", 40):
+            # Sell if stock dropped below buy threshold
+            if score and score.composite < buy_threshold:
                 signals.append(Signal(
                     ticker=pos.ticker, action="sell",
-                    reason=f"score_decay ({score.composite:.1f} < threshold)",
+                    reason=f"below_threshold ({score.composite:.1f} < {buy_threshold})",
                     score=score.composite, suggested_qty=pos.qty,
                 ))
                 continue
 
-            # Stagnation check
-            stag_days = self.tc.get("stagnation_days", 10)
-            stag_min = self.tc.get("stagnation_min_gain", 0.01)
-            if pos.hold_days > stag_days:
-                # We need current price to check gain, but we can flag for review
-                signals.append(Signal(
-                    ticker=pos.ticker, action="sell",
-                    reason=f"stagnation (held {pos.hold_days} days)",
-                    suggested_qty=pos.qty,
-                ))
-                continue
-
-            # Replacement logic: if a new candidate scores 20+ points higher
-            if score and candidates:
-                weakest_score = score.composite
-                best_non_held = next(
+            # Sell if stock is no longer in the ideal top-N and a better
+            # non-held candidate exists to replace it
+            if pos.ticker not in ideal_tickers:
+                better = next(
                     (c for c in candidates
-                     if c.ticker != pos.ticker
-                     and c.ticker not in {p.ticker for p in positions}),
+                     if c.ticker in ideal_tickers
+                     and c.ticker not in held_tickers),
                     None,
                 )
-                if best_non_held and best_non_held.composite - weakest_score > 20:
+                if better:
+                    held_score = score.composite if score else 0
                     signals.append(Signal(
                         ticker=pos.ticker, action="sell",
-                        reason=f"replacement ({best_non_held.ticker} scores {best_non_held.composite:.0f} vs {weakest_score:.0f})",
-                        suggested_qty=pos.qty,
+                        reason=f"outranked (#{self._rank_of(pos.ticker, candidates)} → "
+                               f"replaced by {better.ticker} scored {better.composite:.0f})",
+                        score=held_score, suggested_qty=pos.qty,
                     ))
 
         return signals
+
+    @staticmethod
+    def _rank_of(ticker: str, candidates: list[ScoreResult]) -> str:
+        """Return 1-based rank of ticker in candidates list, or '?' if not found."""
+        for i, c in enumerate(candidates):
+            if c.ticker == ticker:
+                return str(i + 1)
+        return "?"
 
     def _evaluate_buys(
         self,
