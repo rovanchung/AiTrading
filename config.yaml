@@ -1,0 +1,51 @@
+trading:
+  max_positions: 10
+  max_position_pct: 0.10
+  cash_reserve_pct: 0.20
+  risk_per_trade_pct: 0.02
+  buy_threshold: 65
+  sell_threshold: 40
+  stop_loss_pct: 0.05
+  trailing_stop_pct: 0.03
+  take_profit_pct: 0.15
+  stagnation_days: 10
+  stagnation_min_gain: 0.01
+  max_sector_pct: 0.30
+  drawdown_reduce_pct: 0.10
+  drawdown_liquidate_pct: 0.15
+  paper_trading: true
+
+scoring:
+  technical_weight: 0.35
+  fundamental_weight: 0.25
+  momentum_weight: 0.25
+  sentiment_weight: 0.15
+
+screener:
+  min_price: 5.0
+  max_price: 500.0
+  min_avg_volume: 500000
+  min_market_cap: 2000000000
+  universe: "sp500"
+  custom_tickers: []
+
+schedule:
+  market_open: "09:30"
+  market_close: "16:00"
+  scan_interval_minutes: 60
+  monitor_interval_seconds: 30
+  rescore_interval_minutes: 15
+
+data:
+  primary: "yfinance"
+  history_period: "3mo"
+  universe_refresh_days: 7
+
+logging:
+  level: "INFO"
+  file: "data/logs/trading.log"
+  max_size_mb: 50
+  backup_count: 5
+
+database:
+  path: "data/trading.db"

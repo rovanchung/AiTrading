@@ -1,0 +1,5 @@
+yfinance>=0.2.36
+alpaca-py>=0.21.0
+pandas-ta>=0.3.14b
+python-dotenv>=1.0.0
+pyyaml>=6.0
