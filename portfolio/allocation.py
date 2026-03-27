@@ -16,10 +16,11 @@ def get_open_slots(positions: list[Position], config: Config) -> int:
 
 
 def check_sector_limit(
-    sector: str, positions: list[Position], config: Config
+    sector: str, positions: list[Position], config: Config,
+    sector_limit_override: float = None,
 ) -> bool:
     """Check if adding a position in this sector would violate sector limits."""
-    max_sector_pct = config.trading.get("max_sector_pct", 0.30)
+    max_sector_pct = sector_limit_override or config.trading.get("max_sector_pct", 0.30)
     max_pos = config.trading.get("max_positions", 10)
 
     sector_counts = Counter(p.sector for p in positions)

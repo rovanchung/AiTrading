@@ -1,6 +1,6 @@
 # AiTrading
 
-Automated stock trading system. See [DESIGN.md](DESIGN.md) for architecture, scoring algorithms, and module details. See [README.md](README.md) for setup, operation modes, and configuration.
+Automated stock trading system. See [DOCS.md](DOCS.md) for a summary of all documentation files.
 
 ## Python Environment
 
@@ -20,11 +20,27 @@ Automated stock trading system. See [DESIGN.md](DESIGN.md) for architecture, sco
 
 - `core/` — config, models, database, logging, exceptions (shared foundation)
 - `screener/` — S&P 500 universe fetch, filter chain, candidate selection
-- `analyzer/` — technical, fundamental, momentum, sentiment scoring (0-100 each)
+- `analyzer/` — technical, fundamental, momentum, sentiment scoring (0-100 each) + economic macro overlay
 - `portfolio/` — risk sizing, allocation rules, buy/sell decision engine
 - `executor/` — Alpaca broker integration, order management with retries
 - `monitor/` — stop-loss, trailing stop, take-profit, position monitoring
 - `orchestrator/` — trading pipeline, APScheduler job management
+
+## Documentation Maintenance
+
+When making code changes, check which docs need updating:
+
+| What changed | Update |
+|-------------|--------|
+| Scoring logic, weights, indicators | DESIGN.md (scoring section), EXPLAINED.md |
+| Trading parameters, thresholds, risk rules | DESIGN.md (risk table), README.md (config section) |
+| New module or file | DESIGN.md (module section), README.md (project structure), CLAUDE.md (module layout) |
+| Macro/economic logic | DESIGN.md (economic section), EXPLAINED.md (macro section) |
+| CLI flags, run modes | README.md (operation modes) |
+| New config keys | README.md (configuration section), config.yaml |
+| New documentation file | DOCS.md (add entry) |
+
+Always keep DOCS.md in sync as the index of all documentation.
 
 ## gstack
 

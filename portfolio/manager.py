@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 
@@ -21,6 +22,38 @@ class PortfolioManager:
         self.config = config
         self.db = db
         self.tc = config.trading
+        self._macro_adjustments = None
+
+    def set_macro_adjustments(self, adjustments: Optional[dict]):
+        """Apply macro-economic parameter adjustments for this cycle."""
+        self._macro_adjustments = adjustments
+        if adjustments:
+            logger.info(
+                f"Macro adjustments applied: buy_threshold={adjustments.get('buy_threshold', 0):+d}, "
+                f"max_positions={adjustments.get('max_positions', 0):+d}, "
+                f"cash_reserve={adjustments.get('cash_reserve_add', 0):+.0%}"
+            )
+
+    def _get_effective_param(self, key: str, default):
+        """Get a trading parameter with macro adjustments applied."""
+        base = self.tc.get(key, default)
+        if not self._macro_adjustments:
+            return base
+        if key == "buy_threshold":
+            return base + self._macro_adjustments.get("buy_threshold", 0)
+        if key == "max_positions":
+            return max(1, base + self._macro_adjustments.get("max_positions", 0))
+        if key == "cash_reserve_pct":
+            return min(0.50, base + self._macro_adjustments.get("cash_reserve_add", 0))
+        return base
+
+    def _get_sector_limit(self, sector: str) -> float:
+        """Get sector limit with macro cycle adjustments."""
+        default = self.tc.get("max_sector_pct", 0.30)
+        if not self._macro_adjustments:
+            return default
+        sector_limits = self._macro_adjustments.get("sector_limits", {})
+        return sector_limits.get(sector, default)
 
     def evaluate(
         self,
@@ -50,7 +83,10 @@ class PortfolioManager:
         # Account for pending sells to calculate open slots
         pending_sell_tickers = {s.ticker for s in sell_signals}
         remaining_positions = [p for p in positions if p.ticker not in pending_sell_tickers]
-        open_slots = get_open_slots(remaining_positions, self.config)
+
+        # Use macro-adjusted max_positions for open slots
+        effective_max = self._get_effective_param("max_positions", 10)
+        open_slots = max(0, effective_max - len(remaining_positions))
 
         if open_slots > 0:
             buy_signals = self._evaluate_buys(
@@ -125,7 +161,8 @@ class PortfolioManager:
         """Select best candidates to buy."""
         signals = []
         held_tickers = {p.ticker for p in positions}
-        buy_threshold = self.tc.get("buy_threshold", 65)
+        buy_threshold = self._get_effective_param("buy_threshold", 65)
+        cash_reserve_pct = self._get_effective_param("cash_reserve_pct", 0.20)
         tech_min = 50
 
         for candidate in candidates:
@@ -148,9 +185,10 @@ class PortfolioManager:
 
             current_price = df["Close"].iloc[-1]
 
-            # Check sector limit
+            # Check sector limit (macro-adjusted per sector)
             sector = self.db.get_stock_sector(ticker)
-            if not check_sector_limit(sector, positions, self.config):
+            sector_limit = self._get_sector_limit(sector)
+            if not check_sector_limit(sector, positions, self.config, sector_limit):
                 continue
 
             # Calculate position size

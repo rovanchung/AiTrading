@@ -15,6 +15,7 @@ from portfolio.manager import PortfolioManager
 from portfolio.risk import calculate_stop_loss, calculate_take_profit
 from executor.alpaca_client import AlpacaClient
 from executor.order_manager import OrderManager
+from analyzer.economic import MacroAnalyzer
 from monitor.alerts import AlertManager
 
 logger = logging.getLogger("aitrading.orchestrator.pipeline")
@@ -40,12 +41,20 @@ class TradingPipeline:
         self.screener = StockScreener(config, db)
         self.analyzer = StockAnalyzer(config, db)
         self.portfolio_mgr = PortfolioManager(config, db)
+        self.macro = MacroAnalyzer()
 
     def pre_market_prep(self):
-        """Run before market open: refresh universe."""
+        """Run before market open: refresh universe + macro assessment."""
         logger.info("=== Pre-market prep ===")
         max_age = self.config.get("data.universe_refresh_days", 7)
         refresh_universe(self.db, max_age_days=max_age)
+
+        # Run macro assessment
+        logger.info("--- Macro assessment ---")
+        macro = self.macro.get_macro_assessment()
+        self.portfolio_mgr.set_macro_adjustments(macro.get("adjustments"))
+        self.alerts.macro_update(macro)
+
         logger.info("Pre-market prep complete")
 
     def run_full_cycle(self):
@@ -78,7 +87,13 @@ class TradingPipeline:
             logger.warning("No stocks scored successfully")
             return
 
-        # Step 4: Get current state
+        # Step 4: Macro assessment (if not already done in pre-market)
+        if not self.macro._is_cache_valid():
+            logger.info("--- Step 3b: Macro assessment ---")
+            macro = self.macro.get_macro_assessment()
+            self.portfolio_mgr.set_macro_adjustments(macro.get("adjustments"))
+
+        # Step 5: Get current state
         logger.info("--- Step 4: Evaluating portfolio ---")
         account = self.broker.get_account()
         positions = self.db.get_open_positions()

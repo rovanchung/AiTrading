@@ -67,6 +67,17 @@ class AlertManager:
                    f"Failed to execute order for {ticker}: {error}",
                    {"ticker": ticker, "error": error})
 
+    def macro_update(self, macro: dict):
+        # Extract only serializable summary (skip nested sets/bools)
+        summary = {
+            "macro_score": macro["macro_score"],
+            "regime": macro["regime"],
+            "cycle_phase": macro["cycle_phase"],
+        }
+        self.alert(LEVEL_INFO, "Macro Assessment",
+                   f"Score={macro['macro_score']}, regime={macro['regime']}, cycle={macro['cycle_phase']}",
+                   summary)
+
     def _write_alert(self, record: dict):
         try:
             with open(self.alerts_file, "a") as f:

@@ -41,6 +41,10 @@ data:
   history_period: "3mo"
   universe_refresh_days: 7
 
+macro:
+  enabled: true
+  cache_ttl_hours: 4
+
 logging:
   level: "INFO"
   file: "data/logs/trading.log"

@@ -43,13 +43,25 @@ ALPACA_BASE_URL=https://paper-api.alpaca.markets
 
 ### Dry Run (`--dry-run`)
 
-Scans the S&P 500, filters candidates, scores them, and prints the top 20 ranked stocks. No trades are executed. Use this to verify the system is working and review what it would buy.
+Runs macro assessment, scans the S&P 500, filters candidates, scores them, and prints the top 20 ranked stocks with macro-adjusted parameters. No trades are executed.
 
 ```
-=== TOP CANDIDATES ===
-  NFLX    Composite= 56.2  T= 78.0  F= 55.0  M= 25.0  S= 59.0
-  NVDA    Composite= 41.1  T= 28.0  F= 70.0  M= 25.0  S= 50.0
-  AMZN    Composite= 40.0  T= 30.0  F= 65.0  M= 25.0  S= 47.0
+=== MACRO ASSESSMENT ===
+  Score:  44.9/100
+  Regime: neutral
+  Cycle:  late_cycle
+  VIX:    27.4
+  Adjusted parameters:
+    Buy threshold: 65 → 65
+    Max positions: 10 → 8
+    Cash reserve:  20% → 20%
+    Sector preferences (late_cycle):
+      favored (40% cap): Energy, Health Care, Industrials, Materials
+      disfavored (15% cap): Communication Services, Consumer Discretionary, ...
+
+=== TOP CANDIDATES (buy threshold = 65) ===
+  CF      Composite= 78.4  T= 75.0  F= 85.0  M= 90.0  S= 56.0 ✓
+  AKAM    Composite= 76.2  T= 90.0  F= 45.0  M=100.0  S= 56.0 ✓
 ```
 
 ### Single Cycle (`--once`)
@@ -104,6 +116,16 @@ trading:
   paper_trading: true      # USE PAPER TRADING FIRST
 ```
 
+### Macro Settings
+
+```yaml
+macro:
+  enabled: true            # Enable macro-economic overlay
+  cache_ttl_hours: 4       # How often to refresh macro data
+```
+
+The macro overlay automatically adjusts trading parameters based on economic conditions. See [DESIGN.md](DESIGN.md) for regime/cycle details.
+
 ### Scoring Weights
 
 ```yaml
@@ -152,7 +174,8 @@ SQLite with WAL mode. Tables:
 - **Cash reserve** — 20% of portfolio always held in cash
 - **Drawdown protection** — reduces positions at -10%, liquidates at -15%
 - **Trailing stops** — locks in gains, sells if price drops 3% from peak
-- **Sector limits** — max 30% in any single sector
+- **Sector limits** — max 30% in any single sector (macro-adjusted per cycle phase)
+- **Macro overlay** — reduces exposure in bad economic conditions, tightens buy threshold
 - **Order retries** — 3 attempts with 2s delay before marking failed
 
 ## Project Structure
@@ -165,7 +188,7 @@ AiTrading/
 ├── .env                 # API keys
 ├── core/                # Config, models, database, logging, exceptions
 ├── screener/            # Universe fetch, filters, screening pipeline
-├── analyzer/            # Technical, fundamental, momentum, sentiment scoring
+├── analyzer/            # Technical, fundamental, momentum, sentiment, economic scoring
 ├── portfolio/           # Risk sizing, allocation rules, buy/sell decisions
 ├── executor/            # Alpaca client, order management
 ├── monitor/             # Stop-loss, position monitor, alerts
@@ -174,4 +197,4 @@ AiTrading/
 └── data/                # Database and logs (runtime)
 ```
 
-See [DESIGN.md](DESIGN.md) for architecture details and scoring algorithm documentation.
+See [DOCS.md](DOCS.md) for a summary of all documentation files.
