@@ -182,7 +182,7 @@ interactive_menu() {
         echo -e "  ${CYAN}1${RESET})  Install        — Install dependencies & configure API keys"
         echo -e "  ${CYAN}2${RESET})  Dry run         — Scan and analyze only, no trades"
         echo -e "  ${CYAN}3${RESET})  Run once        — One full scan-analyze-trade cycle"
-        echo -e "  ${CYAN}4${RESET})  Run continuous  — Start the trading scheduler (runs until killed)"
+        echo -e "  ${CYAN}4${RESET})  Run continuous  — Start the trading scheduler (press 'q'+Enter to stop)"
         echo -e "  ${CYAN}5${RESET})  Scan            — Manual scan, show candidates"
         echo -e "  ${CYAN}6${RESET})  Setup database  — Initialize or reset the database"
         echo -e "  ${CYAN}7${RESET})  View logs       — Tail application or transaction logs"
@@ -382,7 +382,7 @@ require_db() {
 }
 
 cmd_run() {
-    "$PYTHON" "$DIR/main.py" "$@"
+    exec "$PYTHON" "$DIR/main.py" "$@"
 }
 
 cmd_once() {

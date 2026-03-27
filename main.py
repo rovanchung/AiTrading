@@ -9,8 +9,6 @@ Usage:
 
 import argparse
 import logging
-import signal
-import sys
 
 from core.config import load_config
 from core.database import Database
@@ -99,18 +97,8 @@ def main():
         else:
             pipeline.run_full_cycle()
     else:
-        # Scheduler mode (continuous)
+        # Scheduler mode (continuous) — press 'q' + Enter or Ctrl+C to stop
         scheduler = TradingScheduler(config, db)
-
-        def shutdown(signum, frame):
-            logger.info("Received shutdown signal, stopping...")
-            scheduler.shutdown()
-            db.close()
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, shutdown)
-        signal.signal(signal.SIGTERM, shutdown)
-
         scheduler.start()
 
     db.close()

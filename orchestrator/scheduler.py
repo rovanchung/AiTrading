@@ -2,7 +2,7 @@
 
 import logging
 
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from core.config import Config
@@ -22,7 +22,7 @@ class TradingScheduler:
     def __init__(self, config: Config, db: Database):
         self.config = config
         self.db = db
-        self.scheduler = BlockingScheduler()
+        self.scheduler = BackgroundScheduler()
 
         # Initialize components
         self.broker = AlpacaClient(config)
@@ -104,7 +104,7 @@ class TradingScheduler:
             logger.info(f"  - {job.name} ({job.id}): {job.trigger}")
 
     def start(self):
-        """Start the scheduler (blocks)."""
+        """Start the scheduler and block until 'q' is pressed or Ctrl+C."""
         logger.info("Starting trading scheduler...")
         self.setup_jobs()
 
@@ -112,10 +112,22 @@ class TradingScheduler:
         logger.info("Running initial pre-market prep...")
         self.pipeline.pre_market_prep()
 
-        logger.info("Scheduler running. Press Ctrl+C to stop.")
         self.scheduler.start()
+        logger.info("Scheduler running. Press 'q' + Enter to stop.")
+        print("\n  Scheduler running. Press 'q' + Enter to stop.\n")
+
+        try:
+            while True:
+                line = input()
+                if line.strip().lower() == "q":
+                    break
+        except (KeyboardInterrupt, EOFError):
+            pass
+
+        self.shutdown()
 
     def shutdown(self):
         """Gracefully shut down the scheduler."""
-        logger.info("Shutting down scheduler...")
-        self.scheduler.shutdown(wait=False)
+        if self.scheduler.running:
+            logger.info("Shutting down scheduler...")
+            self.scheduler.shutdown(wait=False)
