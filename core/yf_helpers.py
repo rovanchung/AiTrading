@@ -5,12 +5,20 @@ import time
 
 import yfinance as yf
 import pandas as pd
+from curl_cffi.requests import Session
 
 logger = logging.getLogger("aitrading.core.yf_helpers")
 
 # Defaults
 DEFAULT_TIMEOUT = 10  # seconds per request
 DEFAULT_RETRIES = 1   # 1 retry = 2 total attempts
+
+
+def _make_session(timeout: int) -> Session:
+    """Create a curl_cffi session with the given timeout."""
+    s = Session()
+    s.timeout = timeout
+    return s
 
 
 def yf_download(tickers, timeout=DEFAULT_TIMEOUT, retries=DEFAULT_RETRIES, **kwargs):
@@ -47,8 +55,7 @@ def yf_ticker_info(ticker: str, timeout=DEFAULT_TIMEOUT, retries=DEFAULT_RETRIES
     last_err = None
     for attempt in range(1 + retries):
         try:
-            t = yf.Ticker(ticker)
-            t._session.timeout = timeout
+            t = yf.Ticker(ticker, session=_make_session(timeout))
             return t.info or {}
         except Exception as e:
             last_err = e
@@ -68,8 +75,7 @@ def yf_ticker_news(ticker: str, timeout=DEFAULT_TIMEOUT, retries=DEFAULT_RETRIES
     last_err = None
     for attempt in range(1 + retries):
         try:
-            t = yf.Ticker(ticker)
-            t._session.timeout = timeout
+            t = yf.Ticker(ticker, session=_make_session(timeout))
             return t.news or []
         except Exception as e:
             last_err = e
