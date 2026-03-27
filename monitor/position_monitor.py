@@ -11,6 +11,7 @@ from monitor.stop_loss import check_stop_conditions, update_high_water_mark
 from monitor.alerts import AlertManager
 
 logger = logging.getLogger("aitrading.monitor.positions")
+txn_logger = logging.getLogger("aitrading.transactions")
 
 
 class PositionMonitor:
@@ -82,6 +83,12 @@ class PositionMonitor:
             fill_price = order.filled_price or current_price
             self.db.close_position(pos.id, fill_price, signal.reason)
             pnl = (fill_price - pos.entry_price) * pos.qty
+            pnl_pct = ((fill_price - pos.entry_price) / pos.entry_price) * 100
+            txn_logger.info(
+                f"EXIT | {pos.ticker} | qty={pos.qty} | "
+                f"entry={pos.entry_price:.2f} | exit={fill_price:.2f} | "
+                f"pnl=${pnl:.2f} ({pnl_pct:+.1f}%) | reason={signal.reason}"
+            )
             self.alerts.position_closed(
                 pos.ticker, pos.qty, fill_price, signal.reason, pnl
             )

@@ -34,3 +34,26 @@ def setup_logging(config: Config) -> logging.Logger:
     logger.addHandler(ch)
 
     return logger
+
+
+def setup_transaction_logger(config: Config) -> logging.Logger:
+    """Configure a dedicated transaction logger that writes to a separate file."""
+    log_dir = Path(config.log_file).parent
+    txn_file = log_dir / "transactions.log"
+    txn_file.parent.mkdir(parents=True, exist_ok=True)
+
+    txn_logger = logging.getLogger("aitrading.transactions")
+    txn_logger.propagate = True  # also appears in main log
+
+    fmt = logging.Formatter(
+        "%(asctime)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    max_bytes = config.get("logging.max_size_mb", 50) * 1024 * 1024
+    backup_count = config.get("logging.backup_count", 5)
+    fh = RotatingFileHandler(txn_file, maxBytes=max_bytes, backupCount=backup_count)
+    fh.setFormatter(fmt)
+    txn_logger.addHandler(fh)
+
+    return txn_logger

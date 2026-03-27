@@ -14,7 +14,7 @@ import sys
 
 from core.config import load_config
 from core.database import Database
-from core.logging_config import setup_logging
+from core.logging_config import setup_logging, setup_transaction_logger
 from orchestrator.scheduler import TradingScheduler
 from orchestrator.pipeline import TradingPipeline
 from executor.alpaca_client import AlpacaClient
@@ -32,6 +32,7 @@ def main():
     # Initialize
     config = load_config(args.config)
     logger = setup_logging(config)
+    setup_transaction_logger(config)
     logger.info("AiTrading starting up...")
 
     db = Database(config.db_path)

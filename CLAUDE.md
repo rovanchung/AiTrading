@@ -41,10 +41,3 @@ When making code changes, check which docs need updating:
 | New documentation file | DOCS.md (add entry) |
 
 Always keep DOCS.md in sync as the index of all documentation.
-
-## gstack
-
-- Use the `/browse` skill from gstack for all web browsing tasks
-- Never use `mcp__claude-in-chrome__*` tools
-- If gstack skills aren't working, run `cd .claude/skills/gstack && ./setup` to build the binary and register skills
-- Available gstack skills: `/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`, `/design-consultation`, `/review`, `/ship`, `/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/qa`, `/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`, `/retro`, `/investigate`, `/document-release`, `/codex`, `/cso`, `/autoplan`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, `/gstack-upgrade`

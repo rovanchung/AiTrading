@@ -19,6 +19,7 @@ from analyzer.economic import MacroAnalyzer
 from monitor.alerts import AlertManager
 
 logger = logging.getLogger("aitrading.orchestrator.pipeline")
+txn_logger = logging.getLogger("aitrading.transactions")
 
 
 class TradingPipeline:
@@ -179,6 +180,11 @@ class TradingPipeline:
                         sector=self.db.get_stock_sector(signal.ticker),
                     )
                     self.db.save_position(pos)
+                    txn_logger.info(
+                        f"BUY  | {signal.ticker} | qty={signal.suggested_qty} | "
+                        f"price={fill_price:.2f} | stop={signal.stop_loss:.2f} | "
+                        f"tp={signal.take_profit:.2f} | sector={pos.sector}"
+                    )
                     self.alerts.position_opened(signal.ticker, signal.suggested_qty, fill_price)
 
                 elif signal.action == "sell":
@@ -186,6 +192,12 @@ class TradingPipeline:
                     if existing:
                         self.db.close_position(existing.id, fill_price, signal.reason)
                         pnl = (fill_price - existing.entry_price) * existing.qty
+                        pnl_pct = ((fill_price - existing.entry_price) / existing.entry_price) * 100
+                        txn_logger.info(
+                            f"SELL | {signal.ticker} | qty={existing.qty} | "
+                            f"entry={existing.entry_price:.2f} | exit={fill_price:.2f} | "
+                            f"pnl=${pnl:.2f} ({pnl_pct:+.1f}%) | reason={signal.reason}"
+                        )
                         self.alerts.position_closed(
                             signal.ticker, signal.suggested_qty, fill_price,
                             signal.reason, pnl,

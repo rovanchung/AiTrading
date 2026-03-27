@@ -71,7 +71,7 @@ class Config:
 
     @property
     def log_file(self) -> str:
-        return self.get("logging.file", "data/logs/trading.log")
+        return self.get("logging.file", "data/logs/main.log")
 
     @property
     def log_level(self) -> str:

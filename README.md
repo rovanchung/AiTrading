@@ -154,7 +154,7 @@ screener:
 | `config.yaml` | All configurable parameters |
 | `.env` | API keys (gitignored) |
 | `data/trading.db` | SQLite database (positions, scores, orders) |
-| `data/logs/trading.log` | Application logs (rotating, 50MB max) |
+| `data/logs/main.log` | Application logs (rotating, 50MB max) |
 | `data/logs/alerts.json` | Trading alerts (opens, closes, stops, errors) |
 
 ## Database
