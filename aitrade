@@ -1,0 +1,475 @@
+#!/usr/bin/env bash
+# aitrade — unified CLI for AiTrading
+set -euo pipefail
+
+PYTHON="${PYTHON:-$HOME/python_env/torch-env/bin/python3}"
+PIP="${PIP:-$HOME/python_env/torch-env/bin/pip}"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- Colors ---
+BOLD='\033[1m'
+DIM='\033[2m'
+GREEN='\033[32m'
+CYAN='\033[36m'
+YELLOW='\033[33m'
+RED='\033[31m'
+RESET='\033[0m'
+
+usage() {
+    cat <<'EOF'
+Usage: ./aitrade <command> [options]
+
+Commands:
+  install             Install dependencies and configure API keys
+  run                 Start the continuous trading scheduler (runs until killed)
+  once                Run one full scan-analyze-trade cycle
+  dry-run             Scan and analyze only, no trades executed
+  scan                Manual scan — show candidates that pass filters
+  scan --analyze      Manual scan with full scoring analysis
+  scan --tickers X Y  Analyze specific tickers (e.g. AAPL NVDA NFLX)
+  scan --top N        Show top N results
+  setup-db            Initialize or reset the database
+  logs                Tail the main application log
+  logs txn            Tail the transaction log
+  logs alerts         Show recent alerts
+  db positions        Show open positions
+  db closed           Show closed trades with PnL
+  db orders           Show recent orders
+  db portfolio        Show portfolio value history
+  info                Detailed guide — operation modes, scheduler, config reference
+  help                Show this help message
+
+Options:
+  --config FILE       Use a custom config file (default: config.yaml)
+
+Examples:
+  ./aitrade dry-run
+  ./aitrade scan --tickers AAPL NVDA NFLX
+  ./aitrade scan --analyze --top 5
+  ./aitrade db closed
+  ./aitrade logs txn
+EOF
+}
+
+cmd_info() {
+    cat <<'EOF'
+
+  AiTrading — Detailed Information
+  ================================
+
+  OPERATION MODES
+  ---------------
+
+  Dry Run (./aitrade dry-run)
+    Runs macro assessment, scans the S&P 500, filters candidates, scores them,
+    and prints the top 20 ranked stocks with macro-adjusted parameters.
+    No trades are executed. Great for seeing what the system would do.
+
+    Sample output:
+
+      === MACRO ASSESSMENT ===
+        Score:  44.9/100
+        Regime: neutral
+        Cycle:  late_cycle
+        VIX:    27.4
+        Adjusted parameters:
+          Buy threshold: 65 → 65
+          Max positions: 10 → 8
+          Cash reserve:  20% → 20%
+          Sector preferences (late_cycle):
+            favored (40% cap): Energy, Health Care, Industrials, Materials
+            disfavored (15% cap): Communication Services, Consumer Discretionary, ...
+
+      === TOP CANDIDATES (buy threshold = 65) ===
+        CF      Composite= 78.4  T= 75.0  F= 85.0  M= 90.0  S= 56.0 ✓
+        AKAM    Composite= 76.2  T= 90.0  F= 45.0  M=100.0  S= 56.0 ✓
+
+  Single Cycle (./aitrade once)
+    Runs one complete pipeline: screen → analyze → portfolio evaluate →
+    execute trades → exit. Useful for testing with real broker integration
+    or running manually.
+
+  Continuous (./aitrade run)
+    Starts the APScheduler and runs until killed (Ctrl+C for graceful shutdown).
+
+    Scheduled jobs:
+      Pre-market prep    9:00 AM ET, Mon–Fri       Refresh S&P 500 universe
+      Full cycle         Hourly, 9:35 AM–3:35 PM   Screen → Analyze → Trade
+      Position monitor   Every 30 seconds           Check stops, trailing stops, take-profit
+      Re-score holdings  Every 15 minutes           Detect score decay in held positions
+
+  SCANNING
+  --------
+
+  ./aitrade scan                               Show candidates that pass all filters
+  ./aitrade scan --analyze                     Full scoring analysis (slower, calls yfinance)
+  ./aitrade scan --tickers AAPL NVDA NFLX      Analyze specific tickers
+  ./aitrade scan --analyze --top 5             Top N results only
+
+  CONFIGURATION (config.yaml)
+  ---------------------------
+
+  Trading:
+    max_positions: 10        Max simultaneous positions
+    buy_threshold: 65        Min composite score to buy
+    sell_threshold: 40       Sell when score drops below
+    stop_loss_pct: 0.05      5% hard stop-loss
+    trailing_stop_pct: 0.03  3% trailing stop from peak
+    take_profit_pct: 0.15    15% take-profit
+    paper_trading: true      USE PAPER TRADING FIRST
+
+  Scoring weights:
+    technical: 0.35    fundamental: 0.25    momentum: 0.25    sentiment: 0.15
+
+  Screener filters:
+    min_price: 5.0     max_price: 500.0     min_avg_volume: 500,000
+    min_market_cap: 2B  universe: sp500
+
+  Macro overlay:
+    enabled: true            Adjusts parameters based on economic conditions
+    cache_ttl_hours: 4       How often to refresh macro data
+
+  DATABASE
+  --------
+
+  SQLite with WAL mode at data/trading.db. Tables:
+    universe             S&P 500 tickers, sectors, market caps
+    scores               Historical analysis scores per ticker
+    positions            Open and closed positions with entry/exit details
+    orders               Order log with Alpaca order IDs and fill prices
+    price_snapshots      Price history from position monitoring
+    portfolio_snapshots  Portfolio value over time (for drawdown tracking)
+
+  LOGS
+  ----
+
+  data/logs/main.log           Application logs (rotating, 50MB max, 5 backups)
+  data/logs/transactions.log   Buy/sell/exit events with price and PnL
+  data/logs/alerts.json        Trading alerts (opens, closes, stops, errors)
+
+  SAFETY
+  ------
+
+  • Paper trading by default (trading.paper_trading: true)
+  • 20% cash reserve always held
+  • Drawdown protection: reduces at -10%, liquidates at -15%
+  • Trailing stops: sells if price drops 3% from peak
+  • Sector limits: max 30% in any sector (macro-adjusted per cycle phase)
+  • Macro overlay: reduces exposure in bad conditions, tightens buy threshold
+  • Order retries: 3 attempts with 2s delay before marking failed
+
+EOF
+}
+
+# --- Interactive menu ---
+interactive_menu() {
+    while true; do
+        echo ""
+        echo -e "${BOLD}AiTrading${RESET}"
+        echo ""
+        echo -e "  ${CYAN}1${RESET})  Install        — Install dependencies & configure API keys"
+        echo -e "  ${CYAN}2${RESET})  Dry run         — Scan and analyze only, no trades"
+        echo -e "  ${CYAN}3${RESET})  Run once        — One full scan-analyze-trade cycle"
+        echo -e "  ${CYAN}4${RESET})  Run continuous  — Start the trading scheduler (runs until killed)"
+        echo -e "  ${CYAN}5${RESET})  Scan            — Manual scan, show candidates"
+        echo -e "  ${CYAN}6${RESET})  Setup database  — Initialize or reset the database"
+        echo -e "  ${CYAN}7${RESET})  View logs       — Tail application or transaction logs"
+        echo -e "  ${CYAN}8${RESET})  Query database  — Positions, closed trades, orders"
+        echo -e "  ${CYAN}9${RESET})  Info            — Operation modes, scheduler, config reference"
+        echo -e "  ${CYAN}0${RESET})  Exit"
+        echo ""
+        read -rp "Select [0-9]: " choice
+
+        case "$choice" in
+            1) cmd_install ;;
+            2) cmd_dry_run; break ;;
+            3) cmd_once; break ;;
+            4) cmd_run; break ;;
+            5) scan_submenu ;;
+            6) cmd_setup_db ;;
+            7) logs_submenu ;;
+            8) db_submenu ;;
+            9) cmd_info ;;
+            0) exit 0 ;;
+            *) echo -e "${RED}Invalid choice.${RESET}" ;;
+        esac
+    done
+}
+
+scan_submenu() {
+    echo ""
+    echo -e "${BOLD}Scan Options${RESET}"
+    echo ""
+    echo -e "  ${CYAN}1${RESET})  Scan only        — Show candidates that pass filters"
+    echo -e "  ${CYAN}2${RESET})  Scan + analyze    — Full scoring analysis"
+    echo -e "  ${CYAN}3${RESET})  Specific tickers  — Analyze named tickers"
+    echo -e "  ${CYAN}0${RESET})  Back"
+    echo ""
+    read -rp "Select [0-3]: " choice
+
+    case "$choice" in
+        1) cmd_scan ;;
+        2) cmd_scan --analyze ;;
+        3)
+            read -rp "Tickers (e.g. AAPL NVDA NFLX): " -a tickers
+            if [[ ${#tickers[@]} -gt 0 ]]; then
+                cmd_scan --tickers "${tickers[@]}"
+            else
+                echo "No tickers provided."
+            fi
+            ;;
+        0) return ;;
+        *) echo -e "${RED}Invalid choice.${RESET}" ;;
+    esac
+}
+
+logs_submenu() {
+    echo ""
+    echo -e "${BOLD}Logs${RESET}"
+    echo ""
+    echo -e "  ${CYAN}1${RESET})  Main log          — Application log"
+    echo -e "  ${CYAN}2${RESET})  Transaction log   — Buy/sell/exit events"
+    echo -e "  ${CYAN}3${RESET})  Alerts            — Trading alerts"
+    echo -e "  ${CYAN}0${RESET})  Back"
+    echo ""
+    read -rp "Select [0-3]: " choice
+
+    case "$choice" in
+        1) cmd_logs main ;;
+        2) cmd_logs txn ;;
+        3) cmd_logs alerts ;;
+        0) return ;;
+        *) echo -e "${RED}Invalid choice.${RESET}" ;;
+    esac
+}
+
+db_submenu() {
+    echo ""
+    echo -e "${BOLD}Database Queries${RESET}"
+    echo ""
+    echo -e "  ${CYAN}1${RESET})  Open positions"
+    echo -e "  ${CYAN}2${RESET})  Closed trades (with PnL)"
+    echo -e "  ${CYAN}3${RESET})  Recent orders"
+    echo -e "  ${CYAN}4${RESET})  Portfolio history"
+    echo -e "  ${CYAN}0${RESET})  Back"
+    echo ""
+    read -rp "Select [0-4]: " choice
+
+    case "$choice" in
+        1) cmd_db positions ;;
+        2) cmd_db closed ;;
+        3) cmd_db orders ;;
+        4) cmd_db portfolio ;;
+        0) return ;;
+        *) echo -e "${RED}Invalid choice.${RESET}" ;;
+    esac
+}
+
+# --- Install ---
+cmd_install() {
+    echo ""
+    echo -e "${BOLD}Install${RESET}"
+    echo ""
+    echo -e "  ${CYAN}1${RESET})  Install dependencies"
+    echo -e "  ${CYAN}2${RESET})  Configure API keys (.env)"
+    echo -e "  ${CYAN}3${RESET})  Both"
+    echo -e "  ${CYAN}0${RESET})  Back"
+    echo ""
+    read -rp "Select [0-3]: " choice
+
+    case "$choice" in
+        1) install_deps ;;
+        2) configure_env ;;
+        3) install_deps; configure_env ;;
+        0) return ;;
+        *) echo -e "${RED}Invalid choice.${RESET}" ;;
+    esac
+}
+
+install_deps() {
+    echo ""
+    echo -e "${BOLD}Installing dependencies...${RESET}"
+    "$PIP" install -r "$DIR/requirements.txt"
+    echo -e "${GREEN}Dependencies installed.${RESET}"
+}
+
+configure_env() {
+    local env_file="$DIR/.env"
+    echo ""
+    echo -e "${BOLD}Configure API Keys${RESET}"
+    echo -e "${DIM}Press Enter to keep existing value, or type a new one.${RESET}"
+    echo ""
+
+    # Load existing values
+    local existing_key="" existing_secret="" existing_url=""
+    if [[ -f "$env_file" ]]; then
+        existing_key=$(grep -oP '(?<=^ALPACA_API_KEY=).*' "$env_file" 2>/dev/null || true)
+        existing_secret=$(grep -oP '(?<=^ALPACA_SECRET_KEY=).*' "$env_file" 2>/dev/null || true)
+        existing_url=$(grep -oP '(?<=^ALPACA_BASE_URL=).*' "$env_file" 2>/dev/null || true)
+    fi
+
+    # Mask helper: show first 4 and last 4 chars
+    mask() {
+        local val="$1"
+        if [[ ${#val} -le 8 ]]; then
+            echo "$val"
+        else
+            echo "${val:0:4}...${val: -4}"
+        fi
+    }
+
+    # API Key
+    if [[ -n "$existing_key" ]]; then
+        echo -e "  ALPACA_API_KEY: ${YELLOW}$(mask "$existing_key")${RESET}"
+    else
+        echo -e "  ALPACA_API_KEY: ${DIM}(not set)${RESET}"
+    fi
+    read -rp "  New value: " new_key
+    local api_key="${new_key:-$existing_key}"
+
+    # Secret Key
+    echo ""
+    if [[ -n "$existing_secret" ]]; then
+        echo -e "  ALPACA_SECRET_KEY: ${YELLOW}$(mask "$existing_secret")${RESET}"
+    else
+        echo -e "  ALPACA_SECRET_KEY: ${DIM}(not set)${RESET}"
+    fi
+    read -rp "  New value: " new_secret
+    local secret_key="${new_secret:-$existing_secret}"
+
+    # Base URL
+    local default_url="https://paper-api.alpaca.markets"
+    echo ""
+    if [[ -n "$existing_url" ]]; then
+        echo -e "  ALPACA_BASE_URL: ${YELLOW}${existing_url}${RESET}"
+    else
+        echo -e "  ALPACA_BASE_URL: ${DIM}(default: $default_url)${RESET}"
+    fi
+    read -rp "  New value: " new_url
+    local base_url="${new_url:-${existing_url:-$default_url}}"
+
+    # Write .env
+    cat > "$env_file" <<EOF
+ALPACA_API_KEY=${api_key}
+ALPACA_SECRET_KEY=${secret_key}
+ALPACA_BASE_URL=${base_url}
+EOF
+
+    echo ""
+    echo -e "${GREEN}.env saved.${RESET}"
+}
+
+# --- Command functions ---
+require_db() {
+    local db="$DIR/data/trading.db"
+    if [[ ! -f "$db" ]]; then
+        echo "Error: Database not found at $db"
+        echo "Run './aitrade setup-db' first."
+        exit 1
+    fi
+}
+
+cmd_run() {
+    "$PYTHON" "$DIR/main.py" "$@"
+}
+
+cmd_once() {
+    "$PYTHON" "$DIR/main.py" --once "$@"
+}
+
+cmd_dry_run() {
+    "$PYTHON" "$DIR/main.py" --dry-run "$@"
+}
+
+cmd_scan() {
+    "$PYTHON" "$DIR/scripts/manual_scan.py" "$@"
+}
+
+cmd_setup_db() {
+    "$PYTHON" "$DIR/setup_db.py"
+}
+
+cmd_logs() {
+    local target="${1:-main}"
+    case "$target" in
+        main)
+            tail -f "$DIR/data/logs/main.log"
+            ;;
+        txn|transactions)
+            tail -f "$DIR/data/logs/transactions.log"
+            ;;
+        alerts)
+            cat "$DIR/data/logs/alerts.json" 2>/dev/null | python3 -m json.tool 2>/dev/null \
+                || cat "$DIR/data/logs/alerts.json" 2>/dev/null \
+                || echo "No alerts found."
+            ;;
+        *)
+            echo "Unknown log target: $target"
+            echo "Options: main, txn, alerts"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_db() {
+    require_db
+    local db="$DIR/data/trading.db"
+    local query="${1:-help}"
+    case "$query" in
+        positions)
+            sqlite3 -header -column "$db" \
+                "SELECT ticker, qty, entry_price, stop_loss, take_profit, entry_time
+                 FROM positions WHERE status='open' ORDER BY entry_time DESC;"
+            ;;
+        closed)
+            sqlite3 -header -column "$db" \
+                "SELECT ticker, qty, entry_price, exit_price, pnl,
+                        ROUND((exit_price - entry_price) / entry_price * 100, 1) AS pnl_pct,
+                        exit_reason, exit_time
+                 FROM positions WHERE status='closed' ORDER BY exit_time DESC LIMIT 20;"
+            ;;
+        orders)
+            sqlite3 -header -column "$db" \
+                "SELECT ticker, side, qty, status, filled_price, submitted_at
+                 FROM orders ORDER BY submitted_at DESC LIMIT 20;"
+            ;;
+        portfolio)
+            sqlite3 -header -column "$db" \
+                "SELECT snapshot_time, total_value, cash, positions_value, peak_value
+                 FROM portfolio_snapshots ORDER BY snapshot_time DESC LIMIT 10;"
+            ;;
+        *)
+            echo "Unknown db query: $query"
+            echo "Options: positions, closed, orders, portfolio"
+            exit 1
+            ;;
+    esac
+}
+
+# --- Main dispatch ---
+if [[ $# -eq 0 ]]; then
+    interactive_menu
+    exit 0
+fi
+
+command="$1"
+shift
+
+case "$command" in
+    install)    cmd_install ;;
+    info)       cmd_info ;;
+    run)        cmd_run "$@" ;;
+    once)       cmd_once "$@" ;;
+    dry-run)    cmd_dry_run "$@" ;;
+    scan)       cmd_scan "$@" ;;
+    setup-db)   cmd_setup_db ;;
+    logs)       cmd_logs "$@" ;;
+    db)         cmd_db "$@" ;;
+    help|--help|-h)  usage ;;
+    *)
+        echo "Unknown command: $command"
+        echo ""
+        usage
+        exit 1
+        ;;
+esac
