@@ -1,12 +1,12 @@
 trading:
-  max_positions: 10
-  max_position_pct: 0.10
-  cash_reserve_pct: 0.20
+  max_positions: 15
+  max_position_pct: 0.06
+  cash_reserve_pct: 0.10
   risk_per_trade_pct: 0.02
-  buy_threshold: 65
+  buy_threshold: 60
   stop_loss_pct: 0.05
   trailing_stop_pct: 0.05
-  cooldown_hours: 24
+  cooldown_hours: 1
   take_profit_pct: 0.15
   max_sector_pct: 0.30
   drawdown_reduce_pct: 0.10
@@ -32,8 +32,8 @@ schedule:
   market_close: "16:00"
   prep_minutes_before_open: 5
   scan_interval_minutes: 60
-  rerank_interval_minutes: 10
-  shortlist_size: 50
+  rerank_interval_minutes: 1
+  shortlist_size: 80
   monitor_interval_seconds: 30
 
 fundamentals:
