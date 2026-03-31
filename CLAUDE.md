@@ -1,6 +1,6 @@
 # AiTrading
 
-Automated stock trading system. See [DOCS.md](DOCS.md) for a summary of all documentation files.
+Automated stock trading system.
 
 ## Python Environment
 
@@ -37,22 +37,6 @@ Automated stock trading system. See [DOCS.md](DOCS.md) for a summary of all docu
   - `templates/` — Jinja2 templates with Tailwind CSS dark theme
   - `static/` — Custom CSS and JS (chart helpers, auto-refresh)
 
-## Documentation Maintenance
+## Documentation
 
-When making code changes, check which docs need updating:
-
-| What changed | Update |
-|-------------|--------|
-| Scoring logic, weights, indicators | DESIGN.md (scoring section), EXPLAINED.md |
-| Trading parameters, thresholds, risk rules | DESIGN.md (risk table), README.md (config section) |
-| New module or file | DESIGN.md (module section), README.md (project structure), CLAUDE.md (module layout) |
-| Macro/economic logic | DESIGN.md (economic section), EXPLAINED.md (macro section) |
-| CLI flags, run modes | README.md (operation modes) |
-| New config keys | README.md (configuration section), config.yaml |
-| Data source or provider changes | DESIGN.md (data flow, tech stack), README.md (config section), EXPLAINED.md (step 1), WORKFLOW.md (API providers/calls) |
-| Schedule, job timing, rate limits | WORKFLOW.md (timing summary, rate limits, daily estimates) |
-| New documentation file | DOCS.md (add entry) |
-
-Always keep DOCS.md in sync as the index of all documentation.
-
-**After every code change, update the relevant docs before considering the task complete.** Use the table above to determine which files need updates.
+See [DOCS.md](DOCS.md) for all documentation summaries and the maintenance guide. **After every code change, check DOCS.md to determine which files need updates.**
