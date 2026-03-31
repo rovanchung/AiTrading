@@ -89,8 +89,8 @@ Buy/sell decision engine with risk management. Parameters are dynamically adjust
 - **risk.py** — ATR-based position sizing. Risk per trade capped at 2% of portfolio. Calculates stop-loss and take-profit prices.
 - **allocation.py** — Enforces: max positions, sector limits (macro-adjusted per sector), cash reserve.
 - **manager.py** — Decision logic:
-  - **Buy**: composite ≥ buy_threshold (macro-adjusted), technical ≥ 50, open slots, sector/cash checks pass
-  - **Sell**: composite drops below 40, stagnation (>10 days, <1% gain), or replacement candidate scores 20+ points higher
+  - **Buy**: composite ≥ buy_threshold (macro-adjusted), technical ≥ 50, open slots, sector/cash checks pass. Tickers sold at a loss are blocked for `cooldown_hours` (default 24h). Tickers being sold in the current cycle are also excluded from buy evaluation.
+  - **Sell**: composite drops below buy_threshold, or replacement candidate in ideal top-N outranks held position
   - **Drawdown**: reduce 50% at -10%, liquidate all at -15%
   - Accepts macro adjustments via `set_macro_adjustments()` which modify buy threshold, max positions, cash reserve, and per-sector limits each cycle
 
@@ -103,7 +103,7 @@ Alpaca broker integration.
 ### monitor/
 Real-time position protection.
 
-- **stop_loss.py** — Checks three exit conditions: hard stop-loss (-5%), trailing stop (-3% from peak), take-profit (+15%). Updates high-water mark.
+- **stop_loss.py** — Checks three exit conditions: hard stop-loss (-5%), trailing stop (-5% from peak), take-profit (+15%). Updates high-water mark.
 - **position_monitor.py** — Runs every 30s. Fetches live prices from Alpaca, checks stops, executes exits.
 - **alerts.py** — Event logging to JSON file. Levels: INFO (opened/closed), WARNING (stop triggered), CRITICAL (order failed, drawdown).
 
