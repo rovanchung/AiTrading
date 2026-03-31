@@ -111,8 +111,9 @@ class StockAnalyzer:
                 logger.error(f"Failed to analyze {ticker}: {e}")
 
         results.sort(key=lambda r: r.composite, reverse=True)
-        logger.info(
-            f"Analyzed {len(results)} stocks. "
-            f"Top 5: {[(r.ticker, r.composite) for r in results[:5]]}"
+        top20 = "\n".join(
+            f"  {i+1:2d}. {r.ticker:6s} C={r.composite:5.1f}  T={r.technical:.0f} F={r.fundamental:.0f} M={r.momentum:.0f} S={r.sentiment:.0f}"
+            for i, r in enumerate(results[:20])
         )
+        logger.info(f"Analyzed {len(results)} stocks. Top 20:\n{top20}")
         return results

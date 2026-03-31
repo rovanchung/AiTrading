@@ -43,7 +43,7 @@ def compute_composite_score(
         details=details or {},
     )
 
-    logger.info(
+    logger.debug(
         f"{ticker}: T={result.technical} F={result.fundamental} "
         f"M={result.momentum} S={result.sentiment} => C={result.composite}"
     )
