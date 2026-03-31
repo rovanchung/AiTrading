@@ -88,9 +88,17 @@ class PortfolioManager:
         effective_max = self._get_effective_param("max_positions", 10)
         open_slots = max(0, effective_max - len(remaining_positions))
 
+        # Build exclusion set: tickers being sold this cycle + recent losers on cooldown
+        cooldown_hours = self.tc.get("cooldown_hours", 24)
+        cooled_down = self.db.get_recent_losers(cooldown_hours)
+        excluded_tickers = pending_sell_tickers | cooled_down
+        if cooled_down:
+            logger.info(f"Cooldown active for: {cooled_down}")
+
         if open_slots > 0:
             buy_signals = self._evaluate_buys(
-                ranked_candidates, remaining_positions, account_value, cash, data, open_slots
+                ranked_candidates, remaining_positions, account_value, cash, data,
+                open_slots, excluded_tickers,
             )
             signals.extend(buy_signals)
 
@@ -170,10 +178,12 @@ class PortfolioManager:
         cash: float,
         data: dict[str, pd.DataFrame],
         open_slots: int,
+        excluded_tickers: set[str] | None = None,
     ) -> list[Signal]:
         """Select best candidates to buy."""
         signals = []
         held_tickers = {p.ticker for p in positions}
+        skip_tickers = held_tickers | (excluded_tickers or set())
         buy_threshold = self._get_effective_param("buy_threshold", 65)
         cash_reserve_pct = self._get_effective_param("cash_reserve_pct", 0.20)
         tech_min = 50
@@ -182,7 +192,7 @@ class PortfolioManager:
             if len(signals) >= open_slots:
                 break
 
-            if candidate.ticker in held_tickers:
+            if candidate.ticker in skip_tickers:
                 continue
 
             if candidate.composite < buy_threshold:

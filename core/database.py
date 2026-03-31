@@ -257,6 +257,16 @@ class Database:
             sector=row["sector"] or "",
         )
 
+    def get_recent_losers(self, hours: float = 24) -> set[str]:
+        """Return tickers that were closed at a loss within the last N hours."""
+        rows = self.conn.execute(
+            """SELECT DISTINCT ticker FROM positions
+               WHERE status = 'closed' AND pnl < 0
+                 AND exit_time >= datetime('now', ? || ' hours')""",
+            (f"-{hours}",),
+        ).fetchall()
+        return {r["ticker"] for r in rows}
+
     # --- Fundamentals ---
     _FUNDAMENTALS_COLUMNS = {
         "eps_ttm", "eps_annual", "book_value_per_share_quarterly",
