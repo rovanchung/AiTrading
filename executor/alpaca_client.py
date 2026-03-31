@@ -123,6 +123,54 @@ class AlpacaClient:
         except Exception as e:
             raise BrokerError(f"Failed to get order {order_id}: {e}") from e
 
+    def close_position(self, ticker: str, qty: int) -> dict:
+        """Close an existing position (full or partial). Will NOT open a short."""
+        try:
+            # Verify position exists and is long before closing
+            try:
+                position = self.client.get_open_position(ticker)
+            except Exception:
+                raise BrokerError(
+                    f"Cannot sell {ticker}: no open position on Alpaca"
+                )
+
+            held_qty = abs(int(position.qty))
+            if held_qty <= 0:
+                raise BrokerError(
+                    f"Cannot sell {ticker}: position qty is {held_qty}"
+                )
+
+            close_qty = min(qty, held_qty)
+            if close_qty < qty:
+                logger.warning(
+                    f"Requested sell {qty} {ticker} but only {held_qty} held, "
+                    f"closing {close_qty}"
+                )
+
+            # Use Alpaca close_position API — safe, cannot open shorts
+            from alpaca.trading.requests import ClosePositionRequest
+            result = self.client.close_position(
+                ticker,
+                close_options=ClosePositionRequest(qty=str(close_qty)),
+            )
+            logger.info(
+                f"Position close submitted: sell {close_qty} {ticker} -> {result.id}"
+            )
+            return {
+                "order_id": str(result.id),
+                "status": str(result.status),
+                "filled_price": (
+                    float(result.filled_avg_price)
+                    if result.filled_avg_price
+                    else None
+                ),
+                "qty": close_qty,
+            }
+        except BrokerError:
+            raise
+        except Exception as e:
+            raise BrokerError(f"Failed to close position {ticker}: {e}") from e
+
     def cancel_order(self, order_id: str):
         """Cancel an open order."""
         try:

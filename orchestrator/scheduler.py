@@ -104,7 +104,7 @@ class TradingScheduler:
             logger.info(f"  - {job.name} ({job.id}): {job.trigger}")
 
     def start(self):
-        """Start the scheduler and block until 'q' is pressed or Ctrl+C."""
+        """Start the scheduler and block until Ctrl+C."""
         logger.info("Starting trading scheduler...")
         self.setup_jobs()
 
@@ -113,14 +113,13 @@ class TradingScheduler:
         self.pipeline.pre_market_prep()
 
         self.scheduler.start()
-        logger.info("Scheduler running. Press 'q' + Enter to stop.")
-        print("\n  Scheduler running. Press 'q' + Enter to stop.\n")
+        logger.info("Scheduler running. Press Ctrl+C to stop.")
+        print("\n  Scheduler running. Press Ctrl+C to stop.\n")
 
         try:
             while True:
-                line = input()
-                if line.strip().lower() == "q":
-                    break
+                import time
+                time.sleep(1)
         except (KeyboardInterrupt, EOFError):
             pass
 

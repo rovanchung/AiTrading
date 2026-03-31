@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Orders{% endblock %}
+{% block page_title %}Order History{% endblock %}
+
+{% block content %}
+<!-- Summary Cards -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    {% set filled = orders | selectattr('status', 'equalto', 'filled') | list %}
+    {% set pending = orders | selectattr('status', 'equalto', 'pending') | list %}
+    {% set failed = orders | selectattr('status', 'equalto', 'failed') | list %}
+    {% set buys = orders | selectattr('side', 'equalto', 'buy') | list %}
+    <div class="card">
+        <div class="card-header">Total Orders</div>
+        <div class="card-value">{{ orders | length }}</div>
+    </div>
+    <div class="card">
+        <div class="card-header">Filled</div>
+        <div class="card-value text-emerald-400">{{ filled | length }}</div>
+    </div>
+    <div class="card">
+        <div class="card-header">Buy / Sell</div>
+        <div class="card-value">
+            <span class="text-emerald-400">{{ buys | length }}</span>
+            <span class="text-gray-600 mx-1">/</span>
+            <span class="text-red-400">{{ (orders | length) - (buys | length) }}</span>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">Failed</div>
+        <div class="card-value text-red-400">{{ failed | length }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <table id="ordersTable" class="w-full text-sm">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Time</th>
+                <th>Ticker</th>
+                <th>Side</th>
+                <th>Qty</th>
+                <th>Type</th>
+                <th>Limit Price</th>
+                <th>Fill Price</th>
+                <th>Status</th>
+                <th>Filled At</th>
+                <th>Error</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for o in orders %}
+            <tr>
+                <td class="text-gray-600 font-mono text-xs">{{ o.id }}</td>
+                <td class="text-gray-500 text-xs">{{ o.submitted_at | shortdate }}</td>
+                <td>
+                    <a href="/analysis/{{ o.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ o.ticker }}</a>
+                </td>
+                <td><span class="badge badge-{{ o.side }}">{{ o.side }}</span></td>
+                <td class="text-right">{{ o.qty }}</td>
+                <td class="text-gray-400">{{ o.order_type }}</td>
+                <td class="text-right text-gray-400">{{ o.limit_price | currency if o.limit_price else '—' }}</td>
+                <td class="text-right text-gray-300">{{ o.filled_price | currency if o.filled_price else '—' }}</td>
+                <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
+                <td class="text-gray-500 text-xs">{{ o.filled_at | shortdate if o.filled_at else '—' }}</td>
+                <td class="text-red-400/70 text-xs max-w-[150px] truncate" title="{{ o.error_message or '' }}">
+                    {{ o.error_message or '' }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if not orders %}
+    <p class="text-gray-500 text-center py-12">No orders recorded yet.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#ordersTable').DataTable({
+        ...DT_DEFAULTS,
+        order: [[1, 'desc']],
+    });
+});
+</script>
+{% endblock %}

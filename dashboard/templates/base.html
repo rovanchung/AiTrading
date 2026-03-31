@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Dashboard{% endblock %} — AiTrading</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        profit: '#22c55e',
+                        loss: '#ef4444',
+                        surface: {
+                            50: '#1e293b',
+                            100: '#0f172a',
+                            200: '#0d1424',
+                            300: '#080e1a',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.min.css">
+    <link href="{{ url_for('static', filename='css/custom.css') }}" rel="stylesheet">
+    {% block head %}{% endblock %}
+</head>
+<body class="bg-gray-950 text-gray-200 min-h-screen flex">
+    <!-- Sidebar -->
+    <aside class="w-60 bg-gray-900 border-r border-gray-800 flex flex-col fixed h-full z-20">
+        <div class="p-5 border-b border-gray-800">
+            <h1 class="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                </svg>
+                AiTrading
+            </h1>
+            <p class="text-xs text-gray-500 mt-1">Trading Dashboard</p>
+        </div>
+        <nav class="flex-1 p-3 space-y-1">
+            <a href="/" class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                </svg>
+                Dashboard
+            </a>
+            <a href="/positions" class="nav-link {% if request.endpoint and 'positions' in request.endpoint %}active{% endif %}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                </svg>
+                Positions
+            </a>
+            <a href="/rankings" class="nav-link {% if request.endpoint and 'rankings' in request.endpoint %}active{% endif %}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/>
+                </svg>
+                Rankings
+            </a>
+            <a href="/orders" class="nav-link {% if request.endpoint and 'orders' in request.endpoint %}active{% endif %}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                </svg>
+                Orders
+            </a>
+            <a href="/portfolio" class="nav-link {% if request.endpoint and 'portfolio' in request.endpoint %}active{% endif %}">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/>
+                </svg>
+                Portfolio
+            </a>
+        </nav>
+        <div class="p-4 border-t border-gray-800 text-xs text-gray-600">
+            <div id="last-refresh">—</div>
+            <button onclick="location.reload()" class="mt-2 text-blue-500 hover:text-blue-400 transition">
+                Refresh Now
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="ml-60 flex-1 min-h-screen">
+        <header class="sticky top-0 z-10 bg-gray-950/80 backdrop-blur border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-white">{% block page_title %}Dashboard{% endblock %}</h2>
+            <div class="flex items-center gap-4 text-sm text-gray-400">
+                <span id="clock"></span>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Read-Only
+                </span>
+            </div>
+        </header>
+        <div class="p-6">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/2.1.8/js/dataTables.min.js"></script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

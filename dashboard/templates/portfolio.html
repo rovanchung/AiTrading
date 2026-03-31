@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Portfolio{% endblock %}
+{% block page_title %}Portfolio{% endblock %}
+
+{% block content %}
+<!-- KPI Cards -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="card">
+        <div class="card-header">Portfolio Value</div>
+        <div class="card-value">{{ (snapshot.total_value if snapshot else 0) | currency }}</div>
+    </div>
+    <div class="card">
+        <div class="card-header">Cash</div>
+        <div class="card-value text-gray-300">{{ (snapshot.cash if snapshot else 0) | currency }}</div>
+        {% if snapshot and snapshot.total_value %}
+        <div class="text-xs text-gray-500 mt-1">{{ "%.0f" | format(snapshot.cash / snapshot.total_value * 100) }}% of portfolio</div>
+        {% endif %}
+    </div>
+    <div class="card">
+        <div class="card-header">Total Realized P&L</div>
+        <div class="card-value {{ total_pnl | pnl_color }}">{{ total_pnl | currency }}</div>
+        <div class="text-xs text-gray-500 mt-1">{{ total_trades }} trades</div>
+    </div>
+    <div class="card">
+        <div class="card-header">Win / Loss</div>
+        <div class="card-value">
+            <span class="text-emerald-400">{{ wins }}</span>
+            <span class="text-gray-600 mx-1">/</span>
+            <span class="text-red-400">{{ losses }}</span>
+        </div>
+        <div class="text-xs text-gray-500 mt-1">
+            {{ "%.0f" | format(wins / total_trades * 100 if total_trades > 0 else 0) }}% win rate
+        </div>
+    </div>
+</div>
+
+<!-- Portfolio Value + Drawdown Charts -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+    <div class="card">
+        <div class="card-header mb-3">Portfolio Value Over Time</div>
+        <div class="chart-container" style="height: 300px;">
+            <canvas id="valueChart"></canvas>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header mb-3">Drawdown</div>
+        <div class="chart-container" style="height: 300px;">
+            <canvas id="drawdownChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Allocation + P&L Distribution -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+    <div class="card">
+        <div class="card-header mb-3">Cash vs. Invested</div>
+        <div class="chart-container" style="height: 300px;">
+            <canvas id="allocationChart"></canvas>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header mb-3">Sector Allocation</div>
+        {% if sector_data %}
+        <div class="chart-container" style="height: 300px;">
+            <canvas id="sectorChart"></canvas>
+        </div>
+        {% else %}
+        <div class="flex items-center justify-center h-[300px] text-gray-500">
+            No open positions to show allocation
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- P&L Distribution -->
+<div class="card">
+    <div class="card-header mb-3">P&L Distribution (Closed Trades)</div>
+    <div class="chart-container" style="height: 250px;">
+        <canvas id="pnlChart"></canvas>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SECTOR_COLORS = ['#3b82f6','#22c55e','#eab308','#ef4444','#a855f7','#ec4899','#06b6d4','#f97316','#14b8a6','#8b5cf6','#64748b'];
+
+// Portfolio value chart
+fetchJSON('/api/data/portfolio-history').then(data => {
+    if (!data.labels.length) return;
+    const labels = data.labels.map(t => new Date(t).toLocaleDateString('en-US', {month:'short',day:'numeric'}));
+    createLineChart('valueChart', labels, [
+        { label: 'Total Value', data: data.total_value, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true },
+        { label: 'Peak', data: data.peak_value, borderColor: '#64748b40', borderDash: [4,4], backgroundColor: 'transparent' },
+    ]);
+
+    // Cash vs Invested stacked area
+    new Chart(document.getElementById('allocationChart'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Invested', data: data.positions_value, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.3)', fill: true, tension: 0.3, pointRadius: 0 },
+                { label: 'Cash', data: data.cash, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', fill: true, tension: 0.3, pointRadius: 0 },
+            ],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+                y: { stacked: true, grid: { color: '#1e293b40' }, ticks: { callback: v => formatCurrency(v) } },
+            },
+            elements: { point: { radius: 0 } },
+        },
+    });
+}).catch(() => {});
+
+// Drawdown chart
+fetchJSON('/api/data/drawdown').then(data => {
+    if (!data.labels.length) return;
+    const labels = data.labels.map(t => new Date(t).toLocaleDateString('en-US', {month:'short',day:'numeric'}));
+    new Chart(document.getElementById('drawdownChart'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Drawdown %',
+                data: data.drawdown_pct,
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239,68,68,0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 0,
+            }],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+                y: { grid: { color: '#1e293b40' }, ticks: { callback: v => v.toFixed(1) + '%' } },
+            },
+        },
+    });
+}).catch(() => {});
+
+// Sector allocation
+{% if sector_data %}
+fetchJSON('/api/data/sector-allocation').then(data => {
+    if (!data.labels.length) return;
+    createDoughnutChart('sectorChart', data.labels, data.values, data.colors);
+}).catch(() => {});
+{% endif %}
+
+// P&L distribution
+fetchJSON('/api/data/pnl-distribution').then(data => {
+    if (!data.buckets.length) {
+        document.getElementById('pnlChart').parentElement.innerHTML =
+            '<p class="text-gray-500 text-center py-12">No closed trades yet</p>';
+        return;
+    }
+    new Chart(document.getElementById('pnlChart'), {
+        type: 'bar',
+        data: {
+            labels: data.buckets,
+            datasets: [{
+                label: 'Trades',
+                data: data.counts,
+                backgroundColor: data.buckets.map(b => {
+                    const val = parseFloat(b.replace('$','').replace(',',''));
+                    return val >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)';
+                }),
+                borderColor: data.buckets.map(b => {
+                    const val = parseFloat(b.replace('$','').replace(',',''));
+                    return val >= 0 ? '#22c55e' : '#ef4444';
+                }),
+                borderWidth: 1,
+                borderRadius: 4,
+            }],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                x: { grid: { display: false } },
+                y: { grid: { color: '#1e293b40' }, ticks: { stepSize: 1 } },
+            },
+            plugins: { legend: { display: false } },
+        },
+    });
+}).catch(() => {});
+</script>
+{% endblock %}

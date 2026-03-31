@@ -86,6 +86,32 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     positions_value REAL,
     peak_value REAL
 );
+
+CREATE TABLE IF NOT EXISTS fundamentals (
+    ticker TEXT PRIMARY KEY,
+    eps_ttm REAL,
+    eps_annual REAL,
+    book_value_per_share_quarterly REAL,
+    book_value_per_share_annual REAL,
+    earnings_growth_ttm REAL,
+    earnings_growth_5y REAL,
+    roe_ttm REAL,
+    roe_annual REAL,
+    net_margin_ttm REAL,
+    gross_margin_ttm REAL,
+    operating_margin_ttm REAL,
+    revenue_growth_ttm_yoy REAL,
+    revenue_growth_3y REAL,
+    revenue_growth_5y REAL,
+    current_ratio_quarterly REAL,
+    current_ratio_annual REAL,
+    debt_to_equity_annual REAL,
+    free_cash_flow_ttm REAL,
+    fcf_per_share_ttm REAL,
+    provider TEXT,
+    updated_at TIMESTAMP,
+    raw_json TEXT
+);
 """
 
 
@@ -230,6 +256,57 @@ class Database:
             pnl=row["pnl"] or 0.0,
             sector=row["sector"] or "",
         )
+
+    # --- Fundamentals ---
+    _FUNDAMENTALS_COLUMNS = {
+        "eps_ttm", "eps_annual", "book_value_per_share_quarterly",
+        "book_value_per_share_annual", "earnings_growth_ttm", "earnings_growth_5y",
+        "roe_ttm", "roe_annual", "net_margin_ttm", "gross_margin_ttm",
+        "operating_margin_ttm", "revenue_growth_ttm_yoy", "revenue_growth_3y",
+        "revenue_growth_5y", "current_ratio_quarterly", "current_ratio_annual",
+        "debt_to_equity_annual", "free_cash_flow_ttm", "fcf_per_share_ttm",
+    }
+
+    def upsert_fundamentals(self, ticker: str, data: dict, provider: str,
+                            raw_json: str = ""):
+        """Insert or update fundamental data for a ticker."""
+        # Filter to valid columns only
+        filtered = {k: v for k, v in data.items()
+                    if k in self._FUNDAMENTALS_COLUMNS and v is not None}
+        if not filtered:
+            return
+
+        cols = ["ticker", "provider", "updated_at", "raw_json"] + list(filtered.keys())
+        vals = [ticker, provider, datetime.now(), raw_json] + list(filtered.values())
+        placeholders = ", ".join("?" for _ in cols)
+        updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c != "ticker")
+
+        self.conn.execute(
+            f"""INSERT INTO fundamentals ({', '.join(cols)})
+                VALUES ({placeholders})
+                ON CONFLICT(ticker) DO UPDATE SET {updates}""",
+            vals,
+        )
+        self.conn.commit()
+
+    def get_fundamentals(self, ticker: str) -> Optional[dict]:
+        """Get stored fundamental data for a ticker. Returns None if not found."""
+        row = self.conn.execute(
+            "SELECT * FROM fundamentals WHERE ticker = ?", (ticker,)
+        ).fetchone()
+        if not row:
+            return None
+        return {k: row[k] for k in row.keys() if row[k] is not None}
+
+    def get_fundamentals_age_days(self, ticker: str) -> Optional[float]:
+        """Return days since fundamentals were last updated, or None if no record."""
+        row = self.conn.execute(
+            "SELECT updated_at FROM fundamentals WHERE ticker = ?", (ticker,)
+        ).fetchone()
+        if not row or not row["updated_at"]:
+            return None
+        updated = datetime.fromisoformat(row["updated_at"])
+        return (datetime.now() - updated).total_seconds() / 86400
 
     # --- Orders ---
     def save_order(self, order: Order) -> int:

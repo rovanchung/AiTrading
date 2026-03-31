@@ -6,7 +6,7 @@ from typing import Optional
 import pandas as pd
 
 from core.config import Config
-from core.yf_helpers import yf_download
+from core.data_provider import yf_download
 from core.database import Database
 from screener.universe import get_universe_tickers
 from screener.filters import filter_volume, filter_moving_average, filter_relative_strength

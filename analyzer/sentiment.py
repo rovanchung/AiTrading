@@ -2,7 +2,7 @@
 
 import logging
 
-from core.yf_helpers import yf_ticker_news
+from core.data_provider import yf_ticker_news
 
 logger = logging.getLogger("aitrading.analyzer.sentiment")
 

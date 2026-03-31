@@ -35,8 +35,11 @@ schedule:
   shortlist_size: 50
   monitor_interval_seconds: 30
 
+fundamentals:
+  staleness_days: 80          # skip API call if data is < 80 days old
+
 data:
-  primary: "yfinance"
+  primary: "alpaca"
   history_period: "3mo"
   universe_refresh_days: 7
 

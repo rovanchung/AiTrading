@@ -54,6 +54,9 @@ Foundation layer shared by all modules.
 - **database.py** — SQLite with WAL mode. Tables: `universe`, `scan_results`, `scores`, `positions`, `orders`, `price_snapshots`, `portfolio_snapshots`.
 - **logging_config.py** — Rotating file + console logging.
 - **exceptions.py** — Hierarchy: `AiTradingError` → `ConfigError`, `DataFetchError`, `BrokerError`, `OrderError`, `RiskLimitError`, `DatabaseError`.
+- **alpaca_data.py** — Alpaca market data provider: OHLCV bars and news in yfinance-compatible format. Does not support index tickers (^VIX, ^TNX) — those use yfinance directly.
+- **fmp_data.py** — Financial Modeling Prep provider: fundamental ratios (P/E, PEG, ROE, margins, etc.) in yfinance-compatible format. Free tier: 250 req/day.
+- **data_provider.py** — Unified data layer: routes each data type to its primary provider (Alpaca for OHLCV/news, FMP for fundamentals) with yfinance as fallback for all.
 
 ### screener/
 Reduces the S&P 500 universe (~503 stocks) to actionable candidates (~50-100).
@@ -64,7 +67,7 @@ Reduces the S&P 500 universe (~503 stocks) to actionable candidates (~50-100).
   2. Volume: 20-day avg > 500K shares
   3. Moving Average: price above 50-day SMA (uptrend)
   4. Relative Strength: outperforming SPY over 1 month
-- **screener.py** — Orchestrates batch yfinance download + filter pipeline.
+- **screener.py** — Orchestrates batch data download (Alpaca primary, yfinance fallback) + filter pipeline.
 
 ### analyzer/
 Scores each candidate 0–100 across four dimensions, plus a macro-economic overlay.
@@ -115,6 +118,16 @@ Ties everything together.
   - Re-rank shortlist: every 15 min (re-score top ~50 + held)
   - Position monitor: every 30s
 
+### dashboard/
+Read-only web UI for monitoring the trading system. Flask app with Jinja2 templates, Tailwind CSS dark theme, Chart.js for charts, DataTables for interactive tables. Uses a separate SQLite connection with `PRAGMA query_only=ON` — safe to run concurrently with the trading system.
+
+- **app.py** — Flask app factory with template filters (currency, pct, score_color, timeago)
+- **db.py** — Read-only DB helper (query, query_one) with request-scoped connections
+- **routes/** — Page blueprints: dashboard home, positions, rankings, orders, analysis, portfolio
+- **api/data.py** — JSON endpoints for Chart.js (portfolio history, drawdown, sector allocation, score radar, price history) and DataTables (positions, rankings, orders)
+- **templates/** — Base layout with sidebar nav + 6 page templates
+- **static/** — Custom CSS (dark DataTables theme) and JS (chart helpers, auto-refresh)
+
 ## Economic/Macro Analysis (Portfolio Overlay)
 
 The macro module (`analyzer/economic.py`) operates as a **portfolio-level overlay** — it does not score individual stocks but instead adjusts how aggressively the system trades based on broad economic conditions.
@@ -162,22 +175,50 @@ The macro module (`analyzer/economic.py`) operates as a **portfolio-level overla
 ```
 Wikipedia ──► Universe (503 tickers)
                  │
-yfinance  ──► Screener filters ──► ~50-100 candidates
-                                       │
-yfinance  ──► Analyzer scores ──► Ranked ScoreResults
-   info          │                     │
-   news          │              Portfolio Manager ◄── Macro Overlay
-                 │                     │               (regime, cycle,
-                 │              Buy/Sell Signals        sector prefs)
-                 │                     │
+ Alpaca   ──► Screener filters ──► ~50-100 candidates
+(yf fallback)                          │
+                                Analyzer scores ──► Ranked ScoreResults
+ Alpaca ──► OHLCV bars                │
+ Alpaca ──► News/sentiment     Portfolio Manager ◄── Macro Overlay
+Finnhub ──► Fundamentals ──► SQLite   │               (regime, cycle,
+(FMP/yf fallback)        (cached)  Buy/Sell Signals    sector prefs)
+                                      │
               Alpaca ◄──────── Executor (orders)
                  │
               Alpaca ◄──────── Monitor (stops)
                  │
   VIX, ^TNX ──► Macro Analyzer ──► Regime + Adjustments
-  sector ETFs       │
+  (yfinance)    sector ETFs (Alpaca)
+                    │
                  SQLite ◄──────── All state persisted
 ```
+
+### Data Source Strategy
+
+| Data Type | Primary | Fallback | Notes |
+|-----------|---------|----------|-------|
+| Stock OHLCV (SPY, AAPL, etc.) | Alpaca | yfinance | 200 req/min free tier |
+| Index data (^VIX, ^TNX, ^IRX) | yfinance | — | Alpaca doesn't support indices |
+| Sector ETF bars | Alpaca | yfinance | Used for market breadth |
+| News headlines | Alpaca | yfinance | For sentiment scoring |
+| Fundamentals (P/E, ROE, etc.) | Finnhub | FMP, yfinance | 60 req/min; cached in SQLite, skips API if < 80 days old |
+
+After 10 consecutive Alpaca failures, the system automatically switches to yfinance-only mode until the next successful Alpaca call.
+
+### Fundamental Data Providers
+
+| Provider | Free Tier | Key Ratios | Update Freq | Notes |
+|----------|-----------|------------|-------------|-------|
+| **Finnhub** (primary) | 60 calls/min, no daily cap | EPS, BVPS, ROE, ROA, margins, debt/equity, current ratio, FCF, earnings/revenue growth | Quarterly | Primary source; stored in SQLite `fundamentals` table |
+| **FMP** (fallback) | 250 calls/day | ROE, margins, debt/equity, current ratio, FCF | Quarterly | Fewer fields (no EPS/BVPS), 24h JSON cache |
+| **yfinance** (fallback) | Unlimited (throttled) | EPS, BVPS, ROE, margins, growth, debt/equity, current ratio, FCF | Quarterly | No API key; rate-limited ~0.5s between calls |
+| **SimFin** | 500 credits/month, 5K stocks | 80+ indicators, full statements | Quarterly | Bulk download via Python library; good for batch |
+| **Alpha Vantage** | 25 calls/day | P/E, PEG, P/B, ROE, ROA, margins, EPS | Quarterly | Too limited for primary use |
+| **SEC EDGAR** | Unlimited, no key | Raw financials only (no ratios) | Quarterly | Must compute ratios yourself |
+
+Price-sensitive ratios (P/E, P/B, PEG) are **not stored** — they are computed at runtime from stored EPS/book value + current market price. This avoids stale price data in the DB and ensures accurate valuation at scoring time.
+
+Fundamental data is cached in SQLite (`fundamentals` table) and only refreshed when older than `fundamentals.staleness_days` (default 80 days), since underlying data changes quarterly.
 
 ## Scoring Algorithm Detail
 
@@ -229,10 +270,11 @@ Composite = 0.35×Technical + 0.25×Fundamental + 0.25×Momentum + 0.15×Sentime
 | Component | Technology |
 |-----------|-----------|
 | Language | Python 3.12 |
-| Market data | yfinance |
+| Market data | Alpaca Data API (OHLCV, news), FMP (fundamentals), yfinance (fallback) |
 | Broker | Alpaca (paper trading) |
 | Technical indicators | pandas-ta |
 | Database | SQLite (WAL mode) |
 | Scheduling | APScheduler |
 | ML/AI (future) | PyTorch, scikit-learn |
+| Dashboard | Flask, Tailwind CSS (CDN), Chart.js, DataTables |
 | Config | YAML + dotenv |

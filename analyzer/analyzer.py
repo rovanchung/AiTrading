@@ -58,8 +58,12 @@ class StockAnalyzer:
         tech_score, tech_details = compute_technical_score(df)
         all_details["technical"] = tech_details
 
-        # Fundamental analysis
-        fund_score, fund_details = compute_fundamental_score(ticker)
+        # Fundamental analysis (DB-backed, price ratios computed at runtime)
+        current_price = float(df["Close"].iloc[-1]) if not df.empty else 0.0
+        fund_score, fund_details = compute_fundamental_score(
+            ticker, self.db, current_price,
+            staleness_days=self.config.get("fundamentals.staleness_days", 80.0),
+        )
         all_details["fundamental"] = fund_details
 
         # Momentum analysis

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Rankings{% endblock %}
+{% block page_title %}Stock Rankings{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+    <!-- Rankings Table -->
+    <div class="card lg:col-span-3">
+        <div class="card-header mb-3">Ranked by Composite Score</div>
+        <table id="rankingsTable" class="w-full text-sm">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Ticker</th>
+                    <th>Name</th>
+                    <th>Sector</th>
+                    <th>Composite</th>
+                    <th>Technical</th>
+                    <th>Fundamental</th>
+                    <th>Momentum</th>
+                    <th>Sentiment</th>
+                    <th>Scored</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rankings %}
+                <tr class="cursor-pointer ranking-row" data-ticker="{{ r.ticker }}"
+                    onclick="window.location='/analysis/{{ r.ticker }}'">
+                    <td class="text-gray-500 font-mono">{{ loop.index }}</td>
+                    <td>
+                        <span class="text-blue-400 font-medium">{{ r.ticker }}</span>
+                    </td>
+                    <td class="text-gray-400 max-w-[150px] truncate">{{ r.name or '—' }}</td>
+                    <td class="text-gray-500 text-xs">{{ r.sector or '—' }}</td>
+                    <td>
+                        <div class="flex items-center gap-2">
+                            <div class="w-16 score-bar">
+                                <div class="score-bar-fill" style="width:{{ r.composite_score }}%; background:{{ '#22c55e' if r.composite_score >= 75 else '#3b82f6' if r.composite_score >= 60 else '#eab308' if r.composite_score >= 45 else '#ef4444' }};"></div>
+                            </div>
+                            <span class="font-mono font-bold {{ r.composite_score | score_color }}">
+                                {{ "%.1f" | format(r.composite_score) }}
+                            </span>
+                        </div>
+                    </td>
+                    <td class="text-right font-mono {{ r.technical_score | score_color }}">{{ "%.0f" | format(r.technical_score) }}</td>
+                    <td class="text-right font-mono {{ r.fundamental_score | score_color }}">{{ "%.0f" | format(r.fundamental_score) }}</td>
+                    <td class="text-right font-mono {{ r.momentum_score | score_color }}">{{ "%.0f" | format(r.momentum_score) }}</td>
+                    <td class="text-right font-mono {{ r.sentiment_score | score_color }}">{{ "%.0f" | format(r.sentiment_score) }}</td>
+                    <td class="text-gray-500 text-xs">{{ r.scored_at | timeago }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if not rankings %}
+        <p class="text-gray-500 text-center py-12">No scores available. Run a scan to generate rankings.</p>
+        {% endif %}
+    </div>
+
+    <!-- Radar Chart Panel -->
+    <div class="card">
+        <div class="card-header mb-3">Score Breakdown</div>
+        <div id="radar-placeholder" class="flex items-center justify-center h-48 text-gray-600 text-sm">
+            Click a stock to see its score radar
+        </div>
+        <div id="radar-container" class="hidden">
+            <h3 id="radar-ticker" class="text-white font-bold text-lg text-center mb-2"></h3>
+            <div class="chart-container" style="height: 220px;">
+                <canvas id="radarChart"></canvas>
+            </div>
+            <div id="radar-scores" class="mt-4 space-y-2"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#rankingsTable').DataTable({
+        ...DT_DEFAULTS,
+        pageLength: 50,
+        order: [[4, 'desc']],
+    });
+});
+
+let radarChart = null;
+
+document.querySelectorAll('.ranking-row').forEach(row => {
+    row.addEventListener('mouseenter', function(e) {
+        const ticker = this.dataset.ticker;
+        loadRadar(ticker);
+    });
+    row.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.location = '/analysis/' + this.dataset.ticker;
+    });
+});
+
+async function loadRadar(ticker) {
+    try {
+        const data = await fetchJSON('/api/data/score-radar/' + ticker);
+        if (!data.values || data.values.length === 0) return;
+
+        document.getElementById('radar-placeholder').classList.add('hidden');
+        document.getElementById('radar-container').classList.remove('hidden');
+        document.getElementById('radar-ticker').textContent = ticker;
+
+        if (radarChart) radarChart.destroy();
+        radarChart = createRadarChart('radarChart', data.labels, data.values, ticker);
+
+        // Score details
+        const scoresDiv = document.getElementById('radar-scores');
+        scoresDiv.innerHTML = data.labels.map((label, i) => {
+            const val = data.values[i];
+            const color = scoreColor(val);
+            return `<div class="flex justify-between items-center">
+                <span class="text-xs text-gray-400">${label}</span>
+                <div class="flex items-center gap-2">
+                    <div class="w-20 score-bar"><div class="score-bar-fill" style="width:${val}%;background:${color}"></div></div>
+                    <span class="text-xs font-mono" style="color:${color}">${val.toFixed(0)}</span>
+                </div>
+            </div>`;
+        }).join('') + `<div class="flex justify-between items-center pt-2 border-t border-gray-800 mt-2">
+            <span class="text-xs text-gray-300 font-medium">Composite</span>
+            <span class="text-sm font-bold" style="color:${scoreColor(data.composite)}">${data.composite.toFixed(1)}</span>
+        </div>`;
+    } catch (e) {}
+}
+</script>
+{% endblock %}

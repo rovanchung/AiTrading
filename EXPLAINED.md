@@ -10,7 +10,7 @@ A walkthrough of the dry run output, explaining every step in terms of math and 
 Starting scan on 503 tickers...
 ```
 
-We pull the S&P 500 list from Wikipedia — 503 companies that are large and well-established (think: Apple, Google, ExxonMobil). This is our search space. We don't look at small/risky companies.
+We pull the S&P 500 list from Wikipedia — 503 companies that are large and well-established (think: Apple, Google, ExxonMobil). This is our search space. We don't look at small/risky companies. Price and volume data comes from Alpaca's market data API (the same broker we trade through), fundamental data from Finnhub (with FMP and yfinance as automatic fallbacks). Fundamental data is cached in the database and only refreshed every ~80 days since it changes quarterly.
 
 ---
 
@@ -114,13 +114,15 @@ Uses mathematical indicators computed from price and volume history:
 
 ### Fundamental Score (F) — "Is the company financially solid?" — weight 25%
 
-Uses financial ratios from the company's reports:
+Uses financial ratios from the company's reports. Raw data (EPS, book value, ROE, margins, etc.) is fetched from Finnhub (primary), FMP, or yfinance and stored in the database. Since these values only change quarterly, we skip the API call if data is less than 80 days old.
+
+Price-dependent ratios (P/E, P/B, PEG) are **computed at runtime** from stored EPS/book value + current market price, so they're always up-to-date.
 
 | Metric | What it means | Good value | Points |
 |--------|--------------|------------|--------|
-| P/E ratio | Price / Earnings per share | < 15 (cheap) | +15 |
-| PEG ratio | P/E / Growth rate | < 1 (growth at reasonable price) | +10 |
-| P/B ratio | Price / Book value | < 3 | +10 |
+| P/E ratio | Price / Earnings per share (runtime) | < 15 (cheap) | +15 |
+| PEG ratio | P/E / Growth rate (runtime) | < 1 (growth at reasonable price) | +10 |
+| P/B ratio | Price / Book value (runtime) | < 3 | +10 |
 | ROE | Return on Equity (profit / shareholders' money) | > 15% | +15 |
 | Profit margin | Net income / Revenue | > 10% | +10 |
 | Revenue growth | Year-over-year sales increase | > 10% | +10 |

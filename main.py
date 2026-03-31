@@ -5,6 +5,7 @@ Usage:
     python main.py              # Start the trading scheduler
     python main.py --once       # Run one full cycle and exit
     python main.py --dry-run    # Run one cycle without executing trades
+    python main.py --dashboard  # Launch the web dashboard
 """
 
 import argparse
@@ -24,8 +25,23 @@ def main():
     parser = argparse.ArgumentParser(description="AiTrading - Automated Stock Trading")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--dry-run", action="store_true", help="Analyze only, no trades")
+    parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard")
+    parser.add_argument("--port", type=int, default=5000, help="Dashboard port (default: 5000)")
     parser.add_argument("--config", default="config.yaml", help="Config file path")
     args = parser.parse_args()
+
+    # Dashboard mode — launch Flask web UI (no trading dependencies needed)
+    if args.dashboard:
+        from dashboard.app import create_app
+        import yaml
+        with open(args.config) as f:
+            cfg = yaml.safe_load(f)
+        db_path = cfg.get("database", {}).get("path", "data/trading.db")
+        app = create_app(db_path=db_path)
+        print(f"Starting AiTrading Dashboard at http://127.0.0.1:{args.port}")
+        print(f"Database: {app.config['DB_PATH']}")
+        app.run(host="127.0.0.1", port=args.port, debug=False)
+        return
 
     # Initialize
     config = load_config(args.config)
@@ -97,7 +113,7 @@ def main():
         else:
             pipeline.run_full_cycle()
     else:
-        # Scheduler mode (continuous) — press 'q' + Enter or Ctrl+C to stop
+        # Scheduler mode (continuous) — Ctrl+C to stop
         scheduler = TradingScheduler(config, db)
         scheduler.start()
 

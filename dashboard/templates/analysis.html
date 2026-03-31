@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% block title %}{{ ticker }} Analysis{% endblock %}
+{% block page_title %}
+    <div class="flex items-center gap-3">
+        <a href="/rankings" class="text-gray-500 hover:text-gray-300 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+        </a>
+        <span>{{ ticker }}</span>
+        {% if stock %}
+        <span class="text-sm font-normal text-gray-500">{{ stock.name }}</span>
+        <span class="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400">{{ stock.sector }}</span>
+        {% endif %}
+    </div>
+{% endblock %}
+
+{% block content %}
+{% if not score and not stock %}
+<div class="text-center py-20 text-gray-500">
+    <p class="text-lg mb-2">No data found for {{ ticker }}</p>
+    <a href="/rankings" class="text-blue-500 hover:text-blue-400">Back to Rankings</a>
+</div>
+{% else %}
+
+<!-- Score Overview + Radar -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+    <!-- Score Cards -->
+    <div class="card lg:col-span-1">
+        <div class="card-header mb-4">Composite Score</div>
+        {% if score %}
+        <div class="text-center mb-4">
+            <span class="text-5xl font-bold {{ score.composite_score | score_color }}">
+                {{ "%.1f" | format(score.composite_score) }}
+            </span>
+            <span class="text-gray-500 text-sm block mt-1">/ 100</span>
+        </div>
+        <div class="space-y-3">
+            {% set sub_scores = [
+                ('Technical', score.technical_score, 0.35),
+                ('Fundamental', score.fundamental_score, 0.25),
+                ('Momentum', score.momentum_score, 0.25),
+                ('Sentiment', score.sentiment_score, 0.15),
+            ] %}
+            {% for name, val, weight in sub_scores %}
+            <div>
+                <div class="flex justify-between text-xs mb-1">
+                    <span class="text-gray-400">{{ name }} <span class="text-gray-600">({{ "%.0f" | format(weight * 100) }}%)</span></span>
+                    <span class="font-mono {{ val | score_color }}">{{ "%.0f" | format(val) }}</span>
+                </div>
+                <div class="score-bar">
+                    <div class="score-bar-fill" style="width:{{ val }}%; background:{{ '#22c55e' if val >= 75 else '#3b82f6' if val >= 60 else '#eab308' if val >= 45 else '#ef4444' }};"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="text-xs text-gray-600 mt-4">Scored: {{ score.scored_at | timeago }}</div>
+        {% else %}
+        <p class="text-gray-500 text-center py-8">No score data available</p>
+        {% endif %}
+    </div>
+
+    <!-- Radar Chart -->
+    <div class="card">
+        <div class="card-header mb-3">Score Radar</div>
+        <div class="chart-container" style="height: 250px;">
+            <canvas id="radarChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Score History -->
+    <div class="card">
+        <div class="card-header mb-3">Score History</div>
+        <div class="chart-container" style="height: 250px;">
+            <canvas id="scoreHistoryChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Fundamentals + Price Chart -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+    <!-- Fundamentals -->
+    <div class="card">
+        <div class="card-header mb-3">Fundamentals</div>
+        {% if fundamentals %}
+        <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            {% set fund_items = [
+                ('EPS (TTM)', fundamentals.eps_ttm, '$'),
+                ('EPS (Annual)', fundamentals.eps_annual, '$'),
+                ('Book Value/Share', fundamentals.book_value_per_share_quarterly, '$'),
+                ('ROE (TTM)', fundamentals.roe_ttm, '%'),
+                ('Net Margin', fundamentals.net_margin_ttm, '%'),
+                ('Gross Margin', fundamentals.gross_margin_ttm, '%'),
+                ('Operating Margin', fundamentals.operating_margin_ttm, '%'),
+                ('Revenue Growth (YoY)', fundamentals.revenue_growth_ttm_yoy, '%'),
+                ('Revenue Growth (3Y)', fundamentals.revenue_growth_3y, '%'),
+                ('Earnings Growth (TTM)', fundamentals.earnings_growth_ttm, '%'),
+                ('Current Ratio', fundamentals.current_ratio_quarterly, ''),
+                ('Debt/Equity', fundamentals.debt_to_equity_annual, ''),
+                ('FCF (TTM)', fundamentals.free_cash_flow_ttm, '$M'),
+                ('FCF/Share', fundamentals.fcf_per_share_ttm, '$'),
+            ] %}
+            {% for name, val, unit in fund_items %}
+            {% if val is not none %}
+            <div class="flex justify-between py-1 border-b border-gray-800/50">
+                <span class="text-gray-500">{{ name }}</span>
+                <span class="text-gray-200 font-mono">
+                    {% if unit == '$' %}{{ "%.2f" | format(val) }}{% elif unit == '%' %}{{ "%.1f" | format(val * 100 if val is not none and val < 5 else val) }}%{% elif unit == '$M' %}${{ "%.0f" | format(val / 1000000) }}M{% else %}{{ "%.2f" | format(val) }}{% endif %}
+                </span>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        <div class="text-xs text-gray-600 mt-3">
+            Source: {{ fundamentals.provider or '—' }} | Updated: {{ fundamentals.updated_at | timeago if fundamentals.updated_at else '—' }}
+        </div>
+        {% else %}
+        <p class="text-gray-500 text-center py-8">No fundamental data available</p>
+        {% endif %}
+    </div>
+
+    <!-- Price Chart -->
+    <div class="card">
+        <div class="card-header mb-3">Price History</div>
+        <div class="chart-container" style="height: 300px;">
+            <canvas id="priceChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Score Details + Position History -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <!-- Score Details -->
+    {% if score and score.details %}
+    <div class="card">
+        <div class="card-header mb-3">Score Details</div>
+        <div class="space-y-3 text-sm max-h-[400px] overflow-y-auto">
+            {% for category, items in score.details.items() %}
+            <div>
+                <h4 class="text-gray-300 font-medium mb-1 capitalize">{{ category }}</h4>
+                {% if items is mapping %}
+                <div class="pl-3 space-y-0.5">
+                    {% for key, val in items.items() %}
+                    <div class="flex justify-between text-xs">
+                        <span class="text-gray-500">{{ key }}</span>
+                        <span class="text-gray-300 font-mono">
+                            {% if val is number %}{{ "%.2f" | format(val) }}{% else %}{{ val }}{% endif %}
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <span class="text-gray-400 text-xs pl-3">{{ val }}</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Position History -->
+    <div class="card">
+        <div class="card-header mb-3">Position History</div>
+        {% if positions %}
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-gray-500 text-xs uppercase">
+                    <th class="text-left pb-2">Status</th>
+                    <th class="text-right pb-2">Qty</th>
+                    <th class="text-right pb-2">Entry</th>
+                    <th class="text-right pb-2">Exit</th>
+                    <th class="text-right pb-2">P&L</th>
+                    <th class="text-left pb-2">Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in positions %}
+                <tr class="border-t border-gray-800">
+                    <td class="py-1.5"><span class="badge badge-{{ p.status }}">{{ p.status }}</span></td>
+                    <td class="text-right">{{ p.qty }}</td>
+                    <td class="text-right">{{ p.entry_price | currency }}</td>
+                    <td class="text-right">{{ p.exit_price | currency if p.exit_price else '—' }}</td>
+                    <td class="text-right font-mono {{ p.pnl | pnl_color }}">{{ p.pnl | currency if p.pnl else '—' }}</td>
+                    <td class="text-gray-500 text-xs">{{ p.exit_reason or '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-gray-500 text-center py-8">No position history for {{ ticker }}</p>
+        {% endif %}
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if score %}
+<script>
+// Radar chart
+createRadarChart('radarChart',
+    ['Technical', 'Fundamental', 'Momentum', 'Sentiment'],
+    [{{ score.technical_score }}, {{ score.fundamental_score }}, {{ score.momentum_score }}, {{ score.sentiment_score }}],
+    '{{ ticker }}'
+);
+
+// Score history
+{% if score_history %}
+createLineChart('scoreHistoryChart',
+    [{% for s in score_history %}'{{ s.scored_at | shortdate }}'{% if not loop.last %},{% endif %}{% endfor %}],
+    [{
+        label: 'Composite Score',
+        data: [{% for s in score_history %}{{ s.composite_score }}{% if not loop.last %},{% endif %}{% endfor %}],
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.1)',
+        fill: true,
+    }],
+    { scales: { y: { min: 0, max: 100, ticks: { callback: v => v } } } }
+);
+{% endif %}
+
+// Price chart
+fetchJSON('/api/data/price-history/{{ ticker }}').then(data => {
+    if (data.labels.length === 0) {
+        document.getElementById('priceChart').parentElement.innerHTML =
+            '<p class="text-gray-500 text-center py-12">No price snapshot data</p>';
+        return;
+    }
+    const labels = data.labels.map(t => {
+        const d = new Date(t);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    });
+    createLineChart('priceChart', labels, [{
+        label: 'Price',
+        data: data.prices,
+        borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,0.1)',
+        fill: true,
+    }]);
+}).catch(() => {});
+</script>
+{% endif %}
+{% endblock %}

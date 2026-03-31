@@ -182,7 +182,7 @@ interactive_menu() {
         echo -e "  ${CYAN}1${RESET})  Install        — Install dependencies & configure API keys"
         echo -e "  ${CYAN}2${RESET})  Dry run         — Scan and analyze only, no trades"
         echo -e "  ${CYAN}3${RESET})  Run once        — One full scan-analyze-trade cycle"
-        echo -e "  ${CYAN}4${RESET})  Run continuous  — Start the trading scheduler (press 'q'+Enter to stop)"
+        echo -e "  ${CYAN}4${RESET})  Run continuous  — Start the trading scheduler (Ctrl+C to stop)"
         echo -e "  ${CYAN}5${RESET})  Scan            — Manual scan, show candidates"
         echo -e "  ${CYAN}6${RESET})  Setup database  — Initialize or reset the database"
         echo -e "  ${CYAN}7${RESET})  View logs       — Tail application or transaction logs"
@@ -314,10 +314,13 @@ configure_env() {
 
     # Load existing values
     local existing_key="" existing_secret="" existing_url=""
+    local existing_finnhub="" existing_fmp=""
     if [[ -f "$env_file" ]]; then
         existing_key=$(grep -oP '(?<=^ALPACA_API_KEY=).*' "$env_file" 2>/dev/null || true)
         existing_secret=$(grep -oP '(?<=^ALPACA_SECRET_KEY=).*' "$env_file" 2>/dev/null || true)
         existing_url=$(grep -oP '(?<=^ALPACA_BASE_URL=).*' "$env_file" 2>/dev/null || true)
+        existing_finnhub=$(grep -oP '(?<=^FINNHUB_API_KEY=).*' "$env_file" 2>/dev/null || true)
+        existing_fmp=$(grep -oP '(?<=^FMP_API_KEY=).*' "$env_file" 2>/dev/null || true)
     fi
 
     # Mask helper: show first 4 and last 4 chars
@@ -360,11 +363,35 @@ configure_env() {
     read -rp "  New value: " new_url
     local base_url="${new_url:-${existing_url:-$default_url}}"
 
+    # Finnhub API Key
+    echo ""
+    echo -e "${BOLD}Finnhub${RESET} ${DIM}(free at finnhub.io — used for fundamentals)${RESET}"
+    if [[ -n "$existing_finnhub" ]]; then
+        echo -e "  FINNHUB_API_KEY: ${YELLOW}$(mask "$existing_finnhub")${RESET}"
+    else
+        echo -e "  FINNHUB_API_KEY: ${DIM}(not set)${RESET}"
+    fi
+    read -rp "  New value: " new_finnhub
+    local finnhub_key="${new_finnhub:-$existing_finnhub}"
+
+    # FMP API Key
+    echo ""
+    echo -e "${BOLD}Financial Modeling Prep${RESET} ${DIM}(optional fallback for fundamentals)${RESET}"
+    if [[ -n "$existing_fmp" ]]; then
+        echo -e "  FMP_API_KEY: ${YELLOW}$(mask "$existing_fmp")${RESET}"
+    else
+        echo -e "  FMP_API_KEY: ${DIM}(not set)${RESET}"
+    fi
+    read -rp "  New value: " new_fmp
+    local fmp_key="${new_fmp:-$existing_fmp}"
+
     # Write .env
     cat > "$env_file" <<EOF
 ALPACA_API_KEY=${api_key}
 ALPACA_SECRET_KEY=${secret_key}
 ALPACA_BASE_URL=${base_url}
+FINNHUB_API_KEY=${finnhub_key}
+FMP_API_KEY=${fmp_key}
 EOF
 
     echo ""

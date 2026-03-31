@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- KPI Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div class="card">
+        <div class="card-header">Portfolio Value</div>
+        <div class="card-value">{{ (snapshot.total_value if snapshot else 0) | currency }}</div>
+        <div class="text-xs text-gray-500 mt-1">
+            Peak: {{ (snapshot.peak_value if snapshot else 0) | currency }}
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">Total P&L</div>
+        <div class="card-value {{ total_pnl | pnl_color }}">{{ total_pnl | currency }}</div>
+        <div class="text-xs text-gray-500 mt-1">{{ total_trades }} closed trades</div>
+    </div>
+    <div class="card">
+        <div class="card-header">Win Rate</div>
+        <div class="card-value {% if win_rate >= 50 %}text-emerald-400{% else %}text-red-400{% endif %}">
+            {{ "%.1f" | format(win_rate) }}%
+        </div>
+        <div class="text-xs text-gray-500 mt-1">
+            {{ (win_rate * total_trades / 100) | int }}W / {{ total_trades - (win_rate * total_trades / 100) | int }}L
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">Open Positions</div>
+        <div class="card-value">{{ open_positions | length }}</div>
+        <div class="text-xs text-gray-500 mt-1">
+            Value: {{ open_positions | sum(attribute='entry_price') | currency }}
+        </div>
+    </div>
+</div>
+
+<!-- Portfolio Chart + Top Rankings -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+    <div class="card lg:col-span-2">
+        <div class="card-header mb-3">Portfolio Value</div>
+        <div class="chart-container" style="height: 280px;">
+            <canvas id="portfolioChart"></canvas>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header mb-3">Top 10 Scores</div>
+        <div class="space-y-2 max-h-[280px] overflow-y-auto">
+            {% for s in top_scores %}
+            <a href="/analysis/{{ s.ticker }}" class="flex items-center justify-between p-2 rounded hover:bg-gray-800 transition">
+                <div>
+                    <span class="text-white font-medium text-sm">{{ s.ticker }}</span>
+                    <span class="text-gray-500 text-xs ml-1">{{ s.sector or '' }}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="w-16 score-bar">
+                        <div class="score-bar-fill" style="width: {{ s.composite_score }}%; background: {{ '#22c55e' if s.composite_score >= 75 else '#3b82f6' if s.composite_score >= 60 else '#eab308' if s.composite_score >= 45 else '#ef4444' }};"></div>
+                    </div>
+                    <span class="text-sm font-mono w-10 text-right {{ s.composite_score | score_color }}">
+                        {{ "%.0f" | format(s.composite_score) }}
+                    </span>
+                </div>
+            </a>
+            {% endfor %}
+            {% if not top_scores %}
+            <p class="text-gray-500 text-sm text-center py-8">No scores yet. Run a scan first.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Open Positions + Recent Orders -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="card">
+        <div class="flex items-center justify-between mb-3">
+            <div class="card-header mb-0">Open Positions</div>
+            <a href="/positions" class="text-xs text-blue-500 hover:text-blue-400">View All</a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-gray-500 text-xs uppercase">
+                        <th class="text-left pb-2">Ticker</th>
+                        <th class="text-right pb-2">Qty</th>
+                        <th class="text-right pb-2">Entry</th>
+                        <th class="text-right pb-2">Stop</th>
+                        <th class="text-right pb-2">Target</th>
+                        <th class="text-right pb-2">Sector</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in open_positions %}
+                    <tr class="border-t border-gray-800 hover:bg-gray-900/50">
+                        <td class="py-2">
+                            <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
+                        </td>
+                        <td class="text-right text-gray-300">{{ p.qty }}</td>
+                        <td class="text-right text-gray-300">{{ p.entry_price | currency }}</td>
+                        <td class="text-right text-red-400/70">{{ p.stop_loss | currency }}</td>
+                        <td class="text-right text-emerald-400/70">{{ p.take_profit | currency }}</td>
+                        <td class="text-right text-gray-500 text-xs">{{ p.sector }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not open_positions %}
+                    <tr><td colspan="6" class="text-center py-6 text-gray-500">No open positions</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="flex items-center justify-between mb-3">
+            <div class="card-header mb-0">Recent Orders</div>
+            <a href="/orders" class="text-xs text-blue-500 hover:text-blue-400">View All</a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-gray-500 text-xs uppercase">
+                        <th class="text-left pb-2">Time</th>
+                        <th class="text-left pb-2">Ticker</th>
+                        <th class="text-left pb-2">Side</th>
+                        <th class="text-right pb-2">Qty</th>
+                        <th class="text-right pb-2">Price</th>
+                        <th class="text-left pb-2">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for o in recent_orders %}
+                    <tr class="border-t border-gray-800 hover:bg-gray-900/50">
+                        <td class="py-2 text-gray-500 text-xs">{{ o.submitted_at | timeago }}</td>
+                        <td>
+                            <a href="/analysis/{{ o.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ o.ticker }}</a>
+                        </td>
+                        <td><span class="badge badge-{{ o.side }}">{{ o.side }}</span></td>
+                        <td class="text-right text-gray-300">{{ o.qty }}</td>
+                        <td class="text-right text-gray-300">{{ (o.filled_price or o.limit_price) | currency }}</td>
+                        <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
+                    </tr>
+                    {% endfor %}
+                    {% if not recent_orders %}
+                    <tr><td colspan="6" class="text-center py-6 text-gray-500">No orders yet</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Portfolio value chart
+fetchJSON('/api/data/portfolio-history').then(data => {
+    if (data.labels.length === 0) return;
+    const labels = data.labels.map(t => {
+        const d = new Date(t);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+               d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    });
+    createLineChart('portfolioChart', labels, [
+        {
+            label: 'Total Value',
+            data: data.total_value,
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59,130,246,0.1)',
+            fill: true,
+        },
+        {
+            label: 'Cash',
+            data: data.cash,
+            borderColor: '#64748b',
+            backgroundColor: 'transparent',
+            borderDash: [4, 4],
+        },
+    ]);
+}).catch(() => {});
+</script>
+{% endblock %}

@@ -44,11 +44,14 @@ class OrderManager:
                     order.order_type = "limit"
                     order.limit_price = limit_price
                 else:
-                    # Use market order for sells (immediate exit)
-                    result = self.broker.submit_market_order(
-                        signal.ticker, signal.suggested_qty, "sell"
+                    # Use close_position for sells — prevents accidental shorts
+                    result = self.broker.close_position(
+                        signal.ticker, signal.suggested_qty
                     )
                     order.order_type = "market"
+                    # Update qty in case it was clamped to actual holdings
+                    if "qty" in result and result["qty"] != signal.suggested_qty:
+                        order.qty = result["qty"]
 
                 order.alpaca_order_id = result["order_id"]
                 order.status = result["status"]

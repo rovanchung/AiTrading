@@ -66,6 +66,10 @@ class Config:
         )
 
     @property
+    def finnhub_api_key(self) -> str:
+        return os.environ.get("FINNHUB_API_KEY", "")
+
+    @property
     def db_path(self) -> str:
         return self.get("database.path", "data/trading.db")
 

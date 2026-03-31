@@ -11,7 +11,7 @@ from typing import Optional
 
 import pandas as pd
 
-from core.yf_helpers import yf_download
+from core.data_provider import yf_download
 
 logger = logging.getLogger("aitrading.analyzer.economic")
 

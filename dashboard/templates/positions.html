@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Positions{% endblock %}
+{% block page_title %}Positions{% endblock %}
+
+{% block content %}
+<!-- Tabs -->
+<div class="flex gap-1 mb-6 border-b border-gray-800">
+    <button class="tab-btn active" onclick="showTab('open', this)">
+        Open <span class="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">{{ open_positions | length }}</span>
+    </button>
+    <button class="tab-btn" onclick="showTab('closed', this)">
+        Closed <span class="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-gray-500/10 text-gray-400">{{ closed_positions | length }}</span>
+    </button>
+</div>
+
+<!-- Open Positions -->
+<div id="tab-open">
+    <div class="card">
+        <table id="openTable" class="w-full text-sm">
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Sector</th>
+                    <th>Qty</th>
+                    <th>Entry Price</th>
+                    <th>Entry Time</th>
+                    <th>Stop Loss</th>
+                    <th>Take Profit</th>
+                    <th>High Water</th>
+                    <th>Cost Basis</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in open_positions %}
+                <tr>
+                    <td>
+                        <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
+                    </td>
+                    <td class="text-gray-500">{{ p.sector }}</td>
+                    <td class="text-right">{{ p.qty }}</td>
+                    <td class="text-right">{{ p.entry_price | currency }}</td>
+                    <td class="text-gray-500">{{ p.entry_time | shortdate }}</td>
+                    <td class="text-right text-red-400/70">{{ p.stop_loss | currency }}</td>
+                    <td class="text-right text-emerald-400/70">{{ p.take_profit | currency }}</td>
+                    <td class="text-right text-gray-300">{{ p.high_water_mark | currency }}</td>
+                    <td class="text-right text-gray-300">{{ (p.qty * p.entry_price) | currency }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Closed Positions -->
+<div id="tab-closed" class="hidden">
+    <div class="card">
+        <table id="closedTable" class="w-full text-sm">
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Sector</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>P&L ($)</th>
+                    <th>P&L (%)</th>
+                    <th>Exit Reason</th>
+                    <th>Entry Time</th>
+                    <th>Exit Time</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in closed_positions %}
+                {% set pnl_pct = ((p.exit_price - p.entry_price) / p.entry_price * 100) if p.entry_price and p.exit_price else 0 %}
+                <tr>
+                    <td>
+                        <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
+                    </td>
+                    <td class="text-gray-500">{{ p.sector }}</td>
+                    <td class="text-right">{{ p.qty }}</td>
+                    <td class="text-right">{{ p.entry_price | currency }}</td>
+                    <td class="text-right">{{ p.exit_price | currency }}</td>
+                    <td class="text-right font-medium {{ p.pnl | pnl_color }}">{{ p.pnl | currency }}</td>
+                    <td class="text-right font-medium {{ p.pnl | pnl_color }}">{{ pnl_pct | pct }}</td>
+                    <td>
+                        <span class="badge {% if 'stop' in (p.exit_reason or '') %}badge-failed{% elif 'profit' in (p.exit_reason or '') %}badge-filled{% else %}badge-closed{% endif %}">
+                            {{ p.exit_reason or '—' }}
+                        </span>
+                    </td>
+                    <td class="text-gray-500 text-xs">{{ p.entry_time | shortdate }}</td>
+                    <td class="text-gray-500 text-xs">{{ p.exit_time | shortdate }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    $('#openTable').DataTable({ ...DT_DEFAULTS, order: [[4, 'desc']] });
+    $('#closedTable').DataTable({ ...DT_DEFAULTS, order: [[8, 'desc']] });
+});
+
+function showTab(tab, btn) {
+    document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+    document.getElementById('tab-' + tab).classList.remove('hidden');
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    btn.classList.add('active');
+}
+</script>
+{% endblock %}
