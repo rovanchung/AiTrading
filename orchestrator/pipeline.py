@@ -182,10 +182,12 @@ class TradingPipeline:
         If called before market open (e.g. 9:29:50), analysis runs immediately
         and execution is deferred to market open via a timer.
         """
+        if not self.broker.is_market_open():
+            return
+
         if not self._shortlist:
-            if self.broker.is_market_open():
-                logger.warning("No shortlist cached, running full cycle instead")
-                self.run_full_cycle()
+            logger.warning("No shortlist cached, running full cycle instead")
+            self.run_full_cycle()
             return
 
         t0 = time.time()
@@ -201,11 +203,7 @@ class TradingPipeline:
                 logger.warning("No stocks scored in re-rank")
                 return
 
-            # Execute immediately if market is open, otherwise defer to market open
-            if self.broker.is_market_open():
-                self._atomic_evaluate_and_execute(scored, data)
-            else:
-                self._defer_to_market_open(scored, data)
+            self._atomic_evaluate_and_execute(scored, data)
 
             logger.info(f"=== RE-RANK CYCLE COMPLETE ({time.time() - t0:.1f}s) ===")
 
