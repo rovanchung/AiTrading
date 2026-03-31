@@ -69,25 +69,36 @@ class TradingScheduler:
             misfire_grace_time=300,
         )
 
-        # Re-rank shortlist: every 10 min from 9:29:50 until market close
-        # Fires at :09:50, :19:50, :29:50, :39:50, :49:50, :59:50 each hour
+        # Re-rank shortlist during market hours
         # Pre-open fires (before shortlist is ready) are no-ops
         rerank_interval = sc.get("rerank_interval_minutes", 10)
-        offsets = sorted((rerank_interval * i - 1) % 60 for i in range(1, 60 // rerank_interval + 1))
-        minutes = ",".join(str(m) for m in offsets)
-        self.scheduler.add_job(
-            self.pipeline.run_rerank_cycle,
-            CronTrigger(
-                day_of_week="mon-fri",
-                hour=f"{open_hour}-{close_hour - 1}",
-                minute=minutes,
-                second=50,
-                timezone="US/Eastern",
-            ),
-            id="rerank",
-            name="Re-rank shortlist",
-            misfire_grace_time=300,
-        )
+        if rerank_interval < 5:
+            # For very short intervals, use an interval trigger instead of cron
+            self.scheduler.add_job(
+                self.pipeline.run_rerank_cycle,
+                "interval",
+                minutes=rerank_interval,
+                id="rerank",
+                name=f"Re-rank shortlist (every {rerank_interval}min)",
+                misfire_grace_time=60,
+                max_instances=1,
+            )
+        else:
+            offsets = sorted((rerank_interval * i - 1) % 60 for i in range(1, 60 // rerank_interval + 1))
+            minutes = ",".join(str(m) for m in offsets)
+            self.scheduler.add_job(
+                self.pipeline.run_rerank_cycle,
+                CronTrigger(
+                    day_of_week="mon-fri",
+                    hour=f"{open_hour}-{close_hour - 1}",
+                    minute=minutes,
+                    second=50,
+                    timezone="US/Eastern",
+                ),
+                id="rerank",
+                name="Re-rank shortlist",
+                misfire_grace_time=300,
+            )
 
         # Position monitoring: every 30 seconds
         monitor_interval = sc.get("monitor_interval_seconds", 30)
