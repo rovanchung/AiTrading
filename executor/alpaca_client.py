@@ -171,6 +171,27 @@ class AlpacaClient:
         except Exception as e:
             raise BrokerError(f"Failed to close position {ticker}: {e}") from e
 
+    def get_open_orders(self) -> list[dict]:
+        """Get all open/pending orders from Alpaca."""
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            req = GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            orders = self.client.get_orders(req)
+            return [
+                {
+                    "order_id": str(o.id),
+                    "ticker": o.symbol,
+                    "side": str(o.side),
+                    "qty": int(o.qty),
+                    "status": str(o.status),
+                    "submitted_at": o.submitted_at,
+                }
+                for o in orders
+            ]
+        except Exception as e:
+            raise BrokerError(f"Failed to get open orders: {e}") from e
+
     def cancel_order(self, order_id: str):
         """Cancel an open order."""
         try:

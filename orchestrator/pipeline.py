@@ -229,6 +229,39 @@ class TradingPipeline:
         timer.daemon = True
         timer.start()
 
+    def _sync_pending_orders(self) -> dict[str, list[dict]]:
+        """Cancel stale pending orders and return map of ticker -> open orders.
+
+        This prevents ghost positions from unfilled buy orders and ensures
+        the portfolio state is accurate before making new decisions.
+        """
+        try:
+            open_orders = self.broker.get_open_orders()
+        except Exception as e:
+            logger.error(f"Failed to fetch open orders: {e}")
+            return {}
+
+        by_ticker: dict[str, list[dict]] = {}
+        for o in open_orders:
+            by_ticker.setdefault(o["ticker"], []).append(o)
+
+        if open_orders:
+            tickers = {o["ticker"] for o in open_orders}
+            logger.info(f"Pending orders: {len(open_orders)} for {tickers}")
+
+        return by_ticker
+
+    def _cancel_pending_orders_for(self, ticker: str, side: str,
+                                    pending_orders: dict[str, list[dict]]):
+        """Cancel all pending orders for a ticker on a given side."""
+        for order in pending_orders.get(ticker, []):
+            if order["side"].lower().replace("ordersid.", "").replace("orderside.", "") == side or side == "all":
+                try:
+                    self.broker.cancel_order(order["order_id"])
+                    logger.info(f"Cancelled pending {order['side']} for {ticker}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel order {order['order_id']}: {e}")
+
     def _atomic_evaluate_and_execute(self, scored, data: dict):
         """Atomically get positions, evaluate signals, and execute trades.
 
@@ -236,6 +269,13 @@ class TradingPipeline:
         from the position monitor or rescore jobs.
         """
         with self._trade_lock:
+            # Sync pending orders from Alpaca before making decisions
+            pending_orders = self._sync_pending_orders()
+            pending_buy_tickers = {
+                t for t, orders in pending_orders.items()
+                if any("buy" in o["side"].lower() for o in orders)
+            }
+
             account = self.broker.get_account()
             positions = self.db.get_open_positions()
 
@@ -252,15 +292,29 @@ class TradingPipeline:
                 logger.info("No trading signals generated")
                 return
 
+            # Filter out buy signals for tickers with pending buy orders
+            filtered = []
+            for s in signals:
+                if s.action == "buy" and s.ticker in pending_buy_tickers:
+                    logger.info(f"Skipping buy {s.ticker}: pending buy order exists")
+                    continue
+                filtered.append(s)
+
+            if not filtered:
+                logger.info("No signals after filtering pending orders")
+                return
+
             # Execute signals
-            logger.info(f"Executing {len(signals)} signals (lock held)")
-            self._execute_signals(signals, data, positions)
+            logger.info(f"Executing {len(filtered)} signals (lock held)")
+            self._execute_signals(filtered, data, positions, pending_orders)
 
     def _execute_signals(
-        self, signals, data: dict, positions: list[Position]
+        self, signals, data: dict, positions: list[Position],
+        pending_orders: dict[str, list[dict]] = None,
     ):
         """Execute a list of buy/sell signals. Caller must hold _trade_lock."""
         pos_map = {p.ticker: p for p in positions}
+        pending_orders = pending_orders or {}
 
         for signal in signals:
             try:
@@ -270,6 +324,11 @@ class TradingPipeline:
                 if current_price <= 0:
                     logger.warning(f"No price data for {signal.ticker}, skipping")
                     continue
+
+                # Cancel any pending buy orders before selling to avoid
+                # the buy filling after we've sold the position
+                if signal.action == "sell":
+                    self._cancel_pending_orders_for(signal.ticker, "buy", pending_orders)
 
                 order = self.order_mgr.execute_signal(signal, current_price)
 
