@@ -2,9 +2,23 @@
 
 Automated stock trading system that scans the S&P 500, scores stocks across technical, fundamental, momentum, and sentiment dimensions, and trades via Alpaca.
 
+## Prerequisites
+
+You need API keys from three providers. The free tier of each is sufficient.
+
+| Provider | What it's used for | Free tier | Sign up |
+|----------|-------------------|-----------|---------|
+| **Alpaca** | Broker (trading, account), OHLCV price bars, news headlines | 200 req/min, unlimited paper trading | [alpaca.markets](https://alpaca.markets) |
+| **Finnhub** | Primary fundamentals (EPS, ROE, margins, growth, debt ratios) | 60 req/min, no daily cap | [finnhub.io](https://finnhub.io) |
+| **FMP** *(optional)* | Fundamentals fallback (used only when Finnhub fails) | 250 req/day | [financialmodelingprep.com](https://financialmodelingprep.com) |
+
+**yfinance** is also used as a last-resort fallback for all data types and for index tickers (VIX, treasury yields) that Alpaca doesn't support. It requires no API key.
+
+You'll enter these keys during setup below. See [WORKFLOW.md](WORKFLOW.md) for detailed API usage per cycle and daily call estimates.
+
 ## Quick Start
 
-1. Sign up for a free paper trading account at [alpaca.markets](https://alpaca.markets)
+1. Sign up for free accounts at the providers above (FMP is optional)
 2. Run `./aitrade` and select **Install** to set up dependencies and API keys
 3. Run `./aitrade` and select **Setup database**
 4. Run `./aitrade` and select **Dry run** to verify everything works
@@ -32,29 +46,24 @@ The dashboard is **read-only** and can run safely alongside the trading system. 
 
 In continuous mode (`./aitrade run`), the system runs these jobs automatically:
 
-| Job | Schedule | Duration | Config key | What it does |
-|-----|----------|----------|------------|--------------|
-| Pre-market prep | 9:25 AM ET, Mon–Fri | ~30s | `schedule.prep_minutes_before_open` | Refresh universe, macro, screen all ~500, score, cache shortlist |
-| Full cycle | Hourly at :00, 10 AM–3 PM ET | ~20–30s | `schedule.market_open`, `schedule.market_close` | Full universe screen → Analyze → Buy/Sell (retries up to 12 min) |
-| Re-rank shortlist | Every 10 min, 9:29:50 AM–3:59 PM ET | ~5–10s | `schedule.rerank_interval_minutes` | Re-score top ~50 + held stocks, rebalance portfolio |
-| Position monitor | Every 30 sec | ~1–2s | `schedule.monitor_interval_seconds` | Check stop-loss, trailing stop, take-profit |
+| Job | Schedule | Config key | What it does |
+|-----|----------|------------|--------------|
+| A. Pre-market prep | 9:25 AM ET, Mon–Fri | `schedule.prep_minutes_before_open` | Universe refresh, macro assessment, screen ~500, analyze, cache shortlist |
+| B. Full trading cycle | Hourly at :00, 10 AM–3 PM ET | `schedule.market_open`, `schedule.market_close` | Full universe screen → analyze → evaluate sells/buys → execute orders (retries up to 12 min) |
+| C. Re-rank shortlist | Every 10 min, 9:30 AM–3:59 PM ET | `schedule.rerank_interval_minutes` | Re-fetch and re-score shortlist (~50 tickers) → evaluate sells/buys → execute orders |
+| D. Position monitor | Every 30 sec | `schedule.monitor_interval_seconds` | Check stop-loss, trailing stop, take-profit → execute sells |
 
-The first re-rank fires at 9:29:50 AM, completes analysis pre-open, and defers trade execution to exactly 9:30 AM via a timer. Subsequent re-ranks run every 10 minutes throughout the trading day. Full cycles refresh the entire universe hourly.
+The first re-rank fires at 9:29:50 AM, completes analysis pre-open, and defers trade execution to exactly 9:30 AM via a timer. Full cycles refresh the entire universe hourly. Re-ranks use a cached shortlist (~50 tickers) for faster turnaround.
 
-The portfolio always reflects the best available stocks from universal ranking — there is no separate "score decay" logic. If a held stock drops in ranking and a better candidate exists, it gets replaced automatically. The trading portion (get positions + execute orders) is atomic across all jobs via a shared lock.
+Both full cycles (B) and re-ranks (C) can buy and sell. If a held stock drops in ranking and a better candidate exists, it gets replaced automatically. The trading portion (get positions + execute orders) is atomic across all jobs via a shared lock.
+
+See [WORKFLOW.md](WORKFLOW.md) for the detailed step-by-step flow, API providers called per step, rate limits, and daily API call estimates.
 
 ## Configuration
 
 All parameters are in `config.yaml`. See `./aitrade info` for a full reference.
 
-Market data comes from multiple providers with automatic fallbacks:
-- **OHLCV/News**: Alpaca Data API (200 req/min free tier)
-- **Fundamentals**: Finnhub (60 req/min, no daily cap) → FMP → yfinance
-- **Index tickers** (VIX, treasury yields): yfinance only
-
-Fundamental data is cached in SQLite and only refreshed every ~80 days (configurable via `fundamentals.staleness_days`). Requires `FINNHUB_API_KEY` in `.env` (get one free at [finnhub.io](https://finnhub.io)).
-
-After 10 consecutive Alpaca failures, the system switches to yfinance-only mode until the next successful call.
+Fundamental data is cached in SQLite and only refreshed every ~80 days (configurable via `fundamentals.staleness_days`). After 10 consecutive Alpaca failures, the system switches to yfinance-only mode until the next successful call.
 
 The macro overlay automatically adjusts trading parameters based on economic conditions. See [DESIGN.md](DESIGN.md) for regime/cycle details.
 
