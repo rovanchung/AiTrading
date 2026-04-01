@@ -2,41 +2,42 @@
 
 ## Overview
 
-AiTrading is an automated stock trading system that continuously scans the US equity market for high-growth stocks, scores them across multiple dimensions, executes trades via Alpaca, and actively monitors positions with protective stops.
+AiTrading is an automated stock trading system that continuously scans the S&P 500 for high-growth stocks, scores them across multiple dimensions, and executes trades via Alpaca using a profit-based sell + score-proportional redistribution strategy.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Orchestrator                        │
-│              (APScheduler + Pipeline)                │
-│                                                      │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────────┐  │
-│  │ Pre-mkt  │  │ Full     │  │ Position Monitor  │  │
-│  │ 9:00 AM  │  │ Cycle    │  │ every 30 seconds  │  │
-│  │ refresh  │  │ hourly   │  │                   │  │
-│  └──────────┘  └────┬─────┘  └────────┬──────────┘  │
-│                     │                 │              │
-└─────────────────────┼─────────────────┼──────────────┘
-                      │                 │
-        ┌─────────────▼──────────┐      │
-        │     SCAN → ANALYZE     │      │
-        │     → DECIDE → TRADE   │      │
-        │                        │      │
-        │  1. Screener           │      │
-        │     503 → ~100 tickers │      │
-        │                        │      │
-        │  2. Analyzer           │      │
-        │     Score 0-100 each   │      │
-        │                        │      │
-        │  3. Portfolio Manager  │      │
-        │     Buy/sell signals   │      │
-        │                        │      │
-        │  4. Executor (Alpaca)  │      │
-        │     Submit orders      │      │
-        └────────────┬───────────┘      │
-                     │                  │
-                     ▼                  ▼
+┌──────────────────────────────────────────────────┐
+│                  Orchestrator                     │
+│              (APScheduler + Pipeline)             │
+│                                                   │
+│  ┌──────────┐  ┌──────────┐  ┌────────────────┐  │
+│  │ Pre-mkt  │  │ Full     │  │ Re-rank cycle  │  │
+│  │ 9:25 AM  │  │ Cycle    │  │ every 1 min    │  │
+│  │ refresh  │  │ hourly   │  │ (shortlist)    │  │
+│  └──────────┘  └────┬─────┘  └───────┬────────┘  │
+│                     │                │            │
+└─────────────────────┼────────────────┼────────────┘
+                      │                │
+        ┌─────────────▼──────────┐     │
+        │     SCAN → ANALYZE     │     │
+        │     → DECIDE → TRADE   │     │
+        │                        │     │
+        │  1. Screener           │     │
+        │     503 → ~100 tickers │     │
+        │                        │     │
+        │  2. Analyzer           │     │
+        │     Score 0-100 each   │     │
+        │                        │     │
+        │  3. Portfolio Manager  │     │
+        │     Profit/loss sells  │     │
+        │     + redistribution   │     │
+        │                        │     │
+        │  4. Executor (Alpaca)  │     │
+        │     Submit orders      │     │
+        └────────────┬───────────┘     │
+                     │                 │
+                     ▼                 ▼
               ┌─────────────────────────────┐
               │        SQLite Database       │
               │  positions · scores · orders │
@@ -51,12 +52,13 @@ Foundation layer shared by all modules.
 
 - **config.py** — Loads `config.yaml` + `.env`. Provides `Config` object with dot-notation access (`config.get("trading.max_positions")`).
 - **models.py** — Dataclasses: `Stock`, `ScoreResult`, `Position`, `Order`, `Signal`.
-- **database.py** — SQLite with WAL mode. Tables: `universe`, `scan_results`, `scores`, `positions`, `orders`, `price_snapshots`, `portfolio_snapshots`.
+- **database.py** — SQLite with WAL mode. Tables: `universe`, `scan_results`, `scores`, `positions`, `orders`, `price_snapshots`, `portfolio_snapshots`, `fundamentals`.
 - **logging_config.py** — Rotating file + console logging.
 - **exceptions.py** — Hierarchy: `AiTradingError` → `ConfigError`, `DataFetchError`, `BrokerError`, `OrderError`, `RiskLimitError`, `DatabaseError`.
 - **alpaca_data.py** — Alpaca market data provider: OHLCV bars and news in yfinance-compatible format. Does not support index tickers (^VIX, ^TNX) — those use yfinance directly.
-- **fmp_data.py** — Financial Modeling Prep provider: fundamental ratios (P/E, PEG, ROE, margins, etc.) in yfinance-compatible format. Free tier: 250 req/day.
-- **data_provider.py** — Unified data layer: routes each data type to its primary provider (Alpaca for OHLCV/news, FMP for fundamentals) with yfinance as fallback for all.
+- **finnhub_data.py** — Finnhub fundamentals provider (primary): EPS, BVPS, ROE, margins, growth, debt/equity, current ratio, FCF via `/stock/metric?metric=all`. Free tier: 60 req/min, no daily cap.
+- **fmp_data.py** — Financial Modeling Prep provider (fallback): ROE, margins, debt/equity, current ratio, FCF in yfinance-compatible format. Free tier: 250 req/day.
+- **data_provider.py** — Unified data layer: routes to Alpaca (OHLCV/news), Finnhub→FMP→yfinance (fundamentals), yfinance (fallback + index tickers).
 
 ### screener/
 Reduces the S&P 500 universe (~503 stocks) to actionable candidates (~50-100).
@@ -84,15 +86,12 @@ Scores each candidate 0–100 across four dimensions, plus a macro-economic over
 - **economic.py** — Macro-economic analysis (see below).
 
 ### portfolio/
-Buy/sell decision engine with risk management. Parameters are dynamically adjusted by the macro overlay.
+Profit-based sells + score-proportional redistribution engine. Buy threshold is dynamically adjusted by the macro overlay.
 
-- **risk.py** — ATR-based position sizing. Risk per trade capped at 2% of portfolio. Calculates stop-loss and take-profit prices.
-- **allocation.py** — Enforces: max positions, sector limits (macro-adjusted per sector), cash reserve.
-- **manager.py** — Decision logic:
-  - **Buy**: composite ≥ buy_threshold (macro-adjusted), technical ≥ 50, open slots, sector/cash checks pass. Tickers sold at a loss are blocked for `cooldown_hours` (default 24h). Tickers being sold in the current cycle are also excluded from buy evaluation.
-  - **Sell**: composite drops below buy_threshold, or replacement candidate in ideal top-N outranks held position
-  - **Drawdown**: reduce 50% at -10%, liquidate all at -15%
-  - Accepts macro adjustments via `set_macro_adjustments()` which modify buy threshold, max positions, cash reserve, and per-sector limits each cycle
+- **manager.py** — Two-step decision logic:
+  - **Step 1 — Profit-based sells**: Sell if P&L ≥ +1% (`profit_take_pct`) or ≤ -0.5% (`loss_cut_pct`) from Alpaca avg cost. Sold tickers enter a 2-hour cooldown (`cooldown_hours`).
+  - **Step 2 — Score-based redistribution**: Allocates 50% of portfolio value (`purchase_power_pct`) across all qualifying stocks (composite ≥ `buy_threshold`, macro-adjusted). Each stock gets capital proportional to its composite score share. Generates buy/sell signals to reach target quantities. Positions that no longer qualify are sold.
+  - Accepts macro adjustments via `set_macro_adjustments()` which modify the buy threshold each cycle.
 
 ### executor/
 Alpaca broker integration.
@@ -101,22 +100,20 @@ Alpaca broker integration.
 - **order_manager.py** — Retry logic (3 attempts, 2s delay), order tracking, DB persistence.
 
 ### monitor/
-Real-time position protection.
+Alerting and event logging. Stop-loss/trailing/take-profit logic exists in code but is **deprecated and not scheduled**.
 
-- **stop_loss.py** — Checks three exit conditions: hard stop-loss (-5%), trailing stop (-5% from peak), take-profit (+15%). Updates high-water mark.
-- **position_monitor.py** — Runs every 30s. Fetches live prices from Alpaca, checks stops, executes exits.
+- **stop_loss.py** — (Deprecated) Hard stop-loss, trailing stop, take-profit checks. Not used by the active scheduler.
+- **position_monitor.py** — (Deprecated) Position monitoring loop. Not registered in APScheduler.
 - **alerts.py** — Event logging to JSON file. Levels: INFO (opened/closed), WARNING (stop triggered), CRITICAL (order failed, drawdown).
 
 ### orchestrator/
 Ties everything together.
 
-- **pipeline.py** — `pre_market_prep()`: refresh universe + macro + full scan + score + cache shortlist. `execute_open()`: trade at market open using cached analysis. `run_full_cycle()`: full universe screen → analyze → evaluate → execute. `run_rerank_cycle()`: re-score cached shortlist (~50 tickers + held positions) and rebalance. All trade execution goes through `_atomic_evaluate_and_execute()` under a shared lock.
+- **pipeline.py** — `pre_market_prep()`: refresh universe + macro + full scan + score + cache shortlist. `run_full_cycle()`: full universe screen → analyze → evaluate → execute (retries until deadline). `run_rerank_cycle()`: re-score cached shortlist (~80 tickers + held positions) and rebalance. All trade execution goes through `_atomic_evaluate_and_execute()` under a shared lock. Pending orders are synced from Alpaca before each evaluation (reconcile fills, skip duplicate buys, cancel pending buys before sells).
 - **scheduler.py** — APScheduler jobs:
-  - Pre-market prep: 9:25 AM ET (full universe scan + cache)
-  - Market open execute: 9:29 AM ET (retries until market opens)
-  - Full cycle: hourly at :28, 10–3 PM ET (retries until :40)
-  - Re-rank shortlist: every 15 min (re-score top ~50 + held)
-  - Position monitor: every 30s
+  - Pre-market prep: 9:25 AM ET (full universe scan + cache shortlist)
+  - Full cycle: hourly at :00, 10 AM–3 PM ET (retries up to 12 min)
+  - Re-rank shortlist: every 1 min (re-score ~80 cached tickers + held positions)
 
 ### dashboard/
 Read-only web UI for monitoring the trading system. Flask app with Jinja2 templates, Tailwind CSS dark theme, Chart.js for charts, DataTables for interactive tables. Uses a separate SQLite connection with `PRAGMA query_only=ON` — safe to run concurrently with the trading system.
@@ -153,13 +150,11 @@ The macro module (`analyzer/economic.py`) operates as a **portfolio-level overla
 
 4. **Classify economic cycle**: early_recovery, expansion, late_cycle, recession
 
-5. **Adjust portfolio parameters**:
+5. **Adjust portfolio parameters** (buy threshold offset applied to base value of 60):
 
 | Parameter | Risk-on | Neutral | Risk-off |
 |-----------|---------|---------|----------|
-| Buy threshold | 60 | 65 | 75 |
-| Max positions | 10 | 8 | 5 |
-| Cash reserve | 15% | 20% | 35% |
+| Buy threshold | 60 (base) | 65 (+5) | 75 (+15) |
 
 6. **Adjust sector limits by cycle phase** (Sam Stovall's sector rotation):
 
@@ -180,12 +175,11 @@ Wikipedia ──► Universe (503 tickers)
                                 Analyzer scores ──► Ranked ScoreResults
  Alpaca ──► OHLCV bars                │
  Alpaca ──► News/sentiment     Portfolio Manager ◄── Macro Overlay
-Finnhub ──► Fundamentals ──► SQLite   │               (regime, cycle,
-(FMP/yf fallback)        (cached)  Buy/Sell Signals    sector prefs)
+Finnhub ──► Fundamentals ──► SQLite   │               (buy threshold
+(FMP/yf fallback)        (cached)  Profit sells +      adjustment)
+                                   Redistribution
                                       │
               Alpaca ◄──────── Executor (orders)
-                 │
-              Alpaca ◄──────── Monitor (stops)
                  │
   VIX, ^TNX ──► Macro Analyzer ──► Regime + Adjustments
   (yfinance)    sector ETFs (Alpaca)
@@ -198,10 +192,10 @@ Finnhub ──► Fundamentals ──► SQLite   │               (regime, cyc
 | Data Type | Primary | Fallback | Notes |
 |-----------|---------|----------|-------|
 | Stock OHLCV (SPY, AAPL, etc.) | Alpaca | yfinance | 200 req/min free tier |
-| Index data (^VIX, ^TNX, ^IRX) | yfinance | — | Alpaca doesn't support indices |
+| Index data (^VIX, ^TNX) | yfinance | — | Alpaca doesn't support indices |
 | Sector ETF bars | Alpaca | yfinance | Used for market breadth |
 | News headlines | Alpaca | yfinance | For sentiment scoring |
-| Fundamentals (P/E, ROE, etc.) | Finnhub | FMP, yfinance | 60 req/min; cached in SQLite, skips API if < 80 days old |
+| Fundamentals (EPS, ROE, etc.) | Finnhub | FMP → yfinance | 60 req/min; cached in SQLite `fundamentals` table, skips API if < 80 days old |
 
 After 10 consecutive Alpaca failures, the system automatically switches to yfinance-only mode until the next successful Alpaca call.
 
@@ -209,12 +203,9 @@ After 10 consecutive Alpaca failures, the system automatically switches to yfina
 
 | Provider | Free Tier | Key Ratios | Update Freq | Notes |
 |----------|-----------|------------|-------------|-------|
-| **Finnhub** (primary) | 60 calls/min, no daily cap | EPS, BVPS, ROE, ROA, margins, debt/equity, current ratio, FCF, earnings/revenue growth | Quarterly | Primary source; stored in SQLite `fundamentals` table |
-| **FMP** (fallback) | 250 calls/day | ROE, margins, debt/equity, current ratio, FCF | Quarterly | Fewer fields (no EPS/BVPS), 24h JSON cache |
-| **yfinance** (fallback) | Unlimited (throttled) | EPS, BVPS, ROE, margins, growth, debt/equity, current ratio, FCF | Quarterly | No API key; rate-limited ~0.5s between calls |
-| **SimFin** | 500 credits/month, 5K stocks | 80+ indicators, full statements | Quarterly | Bulk download via Python library; good for batch |
-| **Alpha Vantage** | 25 calls/day | P/E, PEG, P/B, ROE, ROA, margins, EPS | Quarterly | Too limited for primary use |
-| **SEC EDGAR** | Unlimited, no key | Raw financials only (no ratios) | Quarterly | Must compute ratios yourself |
+| **Finnhub** (primary) | 60 calls/min, no daily cap | EPS, BVPS, ROE, ROA, margins, debt/equity, current ratio, FCF, earnings/revenue growth | Quarterly | Primary source via `/stock/metric?metric=all`; stored in SQLite `fundamentals` table |
+| **FMP** (1st fallback) | 250 calls/day | ROE, margins, debt/equity, current ratio, FCF | Quarterly | Fewer fields (no EPS/BVPS), 24h JSON cache |
+| **yfinance** (2nd fallback) | Unlimited (throttled) | EPS, BVPS, ROE, margins, growth, debt/equity, current ratio, FCF | Quarterly | No API key; rate-limited ~0.5s between calls |
 
 Price-sensitive ratios (P/E, P/B, PEG) are **not stored** — they are computed at runtime from stored EPS/book value + current market price. This avoids stale price data in the DB and ensures accurate valuation at scoring time.
 
@@ -254,23 +245,20 @@ Composite = 0.35×Technical + 0.25×Fundamental + 0.25×Momentum + 0.15×Sentime
 
 | Rule | Value | Purpose |
 |------|-------|---------|
-| Max positions | 10 | Diversification |
-| Max per stock | 10% of portfolio | Concentration limit |
-| Max per sector | 30% of portfolio | Sector diversification |
-| Cash reserve | 20% always held | Buying power buffer |
-| Risk per trade | 2% of portfolio | Position sizing via ATR |
-| Stop-loss | -5% from entry | Hard floor |
-| Trailing stop | -3% from peak | Lock in gains |
-| Take-profit | +15% from entry | Profit capture |
-| Drawdown reduce | -10% from peak | Cut exposure by 50% |
-| Drawdown liquidate | -15% from peak | Exit all, pause 24h |
+| Profit take | +1% from avg cost | Sell and reallocate |
+| Loss cut | -0.5% from avg cost | Sell to limit losses |
+| Cooldown | 2 hours | Prevent re-buying a just-sold ticker |
+| Purchase power | 50% of portfolio | Capital allocated for redistribution |
+| Buy threshold | 60 (macro-adjusted) | Minimum composite score to qualify |
+
+Note: Previous risk rules (max positions, sector limits, cash reserve, stop-loss, trailing stop, take-profit, drawdown) are deprecated and commented out in `config.yaml`. Position sizing is now handled entirely by the score-proportional redistribution engine.
 
 ## Technology Stack
 
 | Component | Technology |
 |-----------|-----------|
 | Language | Python 3.12 |
-| Market data | Alpaca Data API (OHLCV, news), FMP (fundamentals), yfinance (fallback) |
+| Market data | Alpaca Data API (OHLCV, news), Finnhub (fundamentals), FMP + yfinance (fallback) |
 | Broker | Alpaca (paper trading) |
 | Technical indicators | pandas-ta |
 | Database | SQLite (WAL mode) |
