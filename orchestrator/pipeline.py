@@ -234,11 +234,17 @@ class TradingPipeline:
         timer.start()
 
     def _sync_pending_orders(self) -> dict[str, list[dict]]:
-        """Cancel stale pending orders and return map of ticker -> open orders.
+        """Sync pending orders: reconcile fills/cancels and return open orders.
 
-        This prevents ghost positions from unfilled buy orders and ensures
-        the portfolio state is accurate before making new decisions.
+        For buy orders that were submitted but not immediately filled:
+        - If now filled on Alpaca: create the position in DB
+        - If canceled/expired on Alpaca: mark order as canceled in DB
+        Also returns the map of currently open orders on Alpaca.
         """
+        # 1. Reconcile DB pending buy orders against Alpaca
+        self._reconcile_pending_buys()
+
+        # 2. Get currently open orders from Alpaca
         try:
             open_orders = self.broker.get_open_orders()
         except Exception as e:
@@ -254,6 +260,74 @@ class TradingPipeline:
             logger.info(f"Pending orders: {len(open_orders)} for {tickers}")
 
         return by_ticker
+
+    def _reconcile_pending_buys(self):
+        """Check DB pending buy orders against Alpaca and reconcile."""
+        pending = self.db.get_pending_buy_orders()
+        if not pending:
+            return
+
+        # Build set of tickers that already have open DB positions
+        open_positions = self.db.get_open_positions()
+        open_tickers = {p.ticker for p in open_positions}
+
+        for db_order in pending:
+            try:
+                result = self.broker.get_order(db_order["alpaca_order_id"])
+                alpaca_status = result["status"].lower().replace("orderstatus.", "")
+
+                if alpaca_status == "filled":
+                    fill_price = result["filled_price"]
+                    self.db.update_order(
+                        db_order["id"],
+                        status="filled",
+                        filled_price=fill_price,
+                        filled_at=datetime.now(),
+                    )
+                    # Create position if one doesn't already exist
+                    if db_order["ticker"] not in open_tickers:
+                        qty = result.get("filled_qty") or db_order["qty"]
+                        stop = calculate_stop_loss(fill_price, self.config)
+                        tp = calculate_take_profit(fill_price, self.config)
+                        pos = Position(
+                            ticker=db_order["ticker"],
+                            qty=qty,
+                            entry_price=fill_price,
+                            entry_time=datetime.now(),
+                            stop_loss=stop,
+                            take_profit=tp,
+                            high_water_mark=fill_price,
+                            status="open",
+                            sector=self.db.get_stock_sector(db_order["ticker"]),
+                        )
+                        self.db.save_position(pos)
+                        txn_logger.info(
+                            f"BUY  | {db_order['ticker']} | qty={qty} | "
+                            f"price={fill_price:.2f} | stop={stop:.2f} | "
+                            f"tp={tp:.2f} | (reconciled from pending order)"
+                        )
+                        open_tickers.add(db_order["ticker"])
+                    logger.info(
+                        f"Reconciled filled buy for {db_order['ticker']} "
+                        f"@ {fill_price}"
+                    )
+
+                elif alpaca_status in ("canceled", "cancelled", "expired", "rejected"):
+                    self.db.update_order(
+                        db_order["id"], status="canceled"
+                    )
+                    logger.info(
+                        f"Buy order for {db_order['ticker']} was {alpaca_status}, "
+                        f"updated DB"
+                    )
+
+                # else: still pending, leave as-is
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to reconcile order {db_order['alpaca_order_id']} "
+                    f"for {db_order['ticker']}: {e}"
+                )
 
     def _cancel_pending_orders_for(self, ticker: str, side: str,
                                     pending_orders: dict[str, list[dict]]):
@@ -342,30 +416,55 @@ class TradingPipeline:
 
                 if order.status == "failed":
                     self.alerts.order_failed(signal.ticker, order.error_message)
+                    # If sell failed because position doesn't exist on Alpaca,
+                    # close the stale DB record so we stop retrying
+                    if (
+                        signal.action == "sell"
+                        and order.error_message
+                        and "no open position" in order.error_message
+                    ):
+                        existing = pos_map.get(signal.ticker)
+                        if existing:
+                            logger.warning(
+                                f"Closing stale DB position for {signal.ticker} "
+                                f"(not found on Alpaca)"
+                            )
+                            self.db.close_position(
+                                existing.id, existing.entry_price, "stale_position_cleanup"
+                            )
                     continue
 
                 fill_price = order.filled_price or current_price
 
                 if signal.action == "buy":
-                    # Create position record
-                    pos = Position(
-                        ticker=signal.ticker,
-                        qty=signal.suggested_qty,
-                        entry_price=fill_price,
-                        entry_time=datetime.now(),
-                        stop_loss=signal.stop_loss,
-                        take_profit=signal.take_profit,
-                        high_water_mark=fill_price,
-                        status="open",
-                        sector=self.db.get_stock_sector(signal.ticker),
-                    )
-                    self.db.save_position(pos)
-                    txn_logger.info(
-                        f"BUY  | {signal.ticker} | qty={signal.suggested_qty} | "
-                        f"price={fill_price:.2f} | stop={signal.stop_loss:.2f} | "
-                        f"tp={signal.take_profit:.2f} | sector={pos.sector}"
-                    )
-                    self.alerts.position_opened(signal.ticker, signal.suggested_qty, fill_price)
+                    if order.status != "filled":
+                        # Order accepted but not yet filled (limit order).
+                        # Position will be created by _sync_pending_orders
+                        # once the fill is confirmed.
+                        logger.info(
+                            f"Buy order for {signal.ticker} accepted "
+                            f"(status={order.status}), awaiting fill"
+                        )
+                    else:
+                        # Order filled immediately — create position record
+                        pos = Position(
+                            ticker=signal.ticker,
+                            qty=order.qty,
+                            entry_price=fill_price,
+                            entry_time=datetime.now(),
+                            stop_loss=signal.stop_loss,
+                            take_profit=signal.take_profit,
+                            high_water_mark=fill_price,
+                            status="open",
+                            sector=self.db.get_stock_sector(signal.ticker),
+                        )
+                        self.db.save_position(pos)
+                        txn_logger.info(
+                            f"BUY  | {signal.ticker} | qty={order.qty} | "
+                            f"price={fill_price:.2f} | stop={signal.stop_loss:.2f} | "
+                            f"tp={signal.take_profit:.2f} | sector={pos.sector}"
+                        )
+                        self.alerts.position_opened(signal.ticker, order.qty, fill_price)
 
                 elif signal.action == "sell":
                     existing = pos_map.get(signal.ticker)

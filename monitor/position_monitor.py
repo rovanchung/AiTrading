@@ -106,6 +106,19 @@ class PositionMonitor:
                 self.alerts.stop_triggered(pos.ticker, signal.reason, current_price)
             else:
                 self.alerts.order_failed(pos.ticker, order.error_message)
+                # If sell failed because position doesn't exist on Alpaca,
+                # close the stale DB record so we stop retrying
+                if (
+                    order.error_message
+                    and "no open position" in order.error_message
+                ):
+                    logger.warning(
+                        f"Closing stale DB position for {pos.ticker} "
+                        f"(not found on Alpaca)"
+                    )
+                    self.db.close_position(
+                        pos.id, pos.entry_price, "stale_position_cleanup"
+                    )
 
     def get_portfolio_summary(self) -> dict:
         """Get a summary of the current portfolio state."""
