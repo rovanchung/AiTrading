@@ -43,7 +43,8 @@ class TradingPipeline:
         self.screener = StockScreener(config, db)
         self.analyzer = StockAnalyzer(config, db)
         self.portfolio_mgr = PortfolioManager(config, db)
-        self.macro = MacroAnalyzer()
+        self.macro_enabled = config.get("macro.enabled", True)
+        self.macro = MacroAnalyzer() if self.macro_enabled else None
 
         # Cached shortlist: top tickers from last full scan for intra-hour re-ranking
         self._shortlist = []
@@ -63,10 +64,13 @@ class TradingPipeline:
         refresh_universe(self.db, max_age_days=max_age)
 
         # Macro assessment
-        logger.info("--- Macro assessment ---")
-        macro = self.macro.get_macro_assessment()
-        self.portfolio_mgr.set_macro_adjustments(macro.get("adjustments"))
-        self.alerts.macro_update(macro)
+        if self.macro:
+            logger.info("--- Macro assessment ---")
+            macro = self.macro.get_macro_assessment()
+            self.portfolio_mgr.set_macro_adjustments(macro.get("adjustments"))
+            self.alerts.macro_update(macro)
+        else:
+            logger.info("--- Macro overlay disabled ---")
 
         # Screen for candidates
         logger.info("--- Screening ---")
@@ -135,7 +139,7 @@ class TradingPipeline:
                     return
 
                 # Step 4: Macro assessment (if cache expired)
-                if not self.macro._is_cache_valid():
+                if self.macro and not self.macro._is_cache_valid():
                     logger.info("--- Step 3b: Macro assessment ---")
                     macro = self.macro.get_macro_assessment()
                     self.portfolio_mgr.set_macro_adjustments(macro.get("adjustments"))

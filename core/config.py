@@ -29,6 +29,14 @@ class Config:
                 return default
         return val
 
+    def set(self, key: str, value: Any) -> None:
+        """Set a dot-separated key like 'macro.enabled'."""
+        parts = key.split(".")
+        d = self._data
+        for part in parts[:-1]:
+            d = d.setdefault(part, {})
+        d[parts[-1]] = value
+
     def __getitem__(self, key: str) -> Any:
         val = self.get(key)
         if val is None:

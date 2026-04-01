@@ -5,6 +5,7 @@ Usage:
     python main.py              # Start the trading scheduler
     python main.py --once       # Run one full cycle and exit
     python main.py --dry-run    # Run one cycle without executing trades
+    python main.py --no-macro   # Disable macro overlay (combine with any mode)
     python main.py --dashboard  # Launch the web dashboard
 """
 
@@ -27,6 +28,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Analyze only, no trades")
     parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard")
     parser.add_argument("--port", type=int, default=5000, help="Dashboard port (default: 5000)")
+    parser.add_argument("--no-macro", action="store_true", help="Disable macro overlay (use base config values)")
     parser.add_argument("--config", default="config.yaml", help="Config file path")
     args = parser.parse_args()
 
@@ -45,6 +47,8 @@ def main():
 
     # Initialize
     config = load_config(args.config)
+    if args.no_macro:
+        config.set("macro.enabled", False)
     logger = setup_logging(config)
     setup_transaction_logger(config)
     logger.info("AiTrading starting up...")
@@ -64,35 +68,40 @@ def main():
             logger.info("DRY RUN — analyzing only, no trades will be executed")
 
             # Show macro assessment
-            macro = pipeline.macro.get_macro_assessment()
-            print("\n=== MACRO ASSESSMENT ===")
-            print(f"  Score:  {macro['macro_score']}/100")
-            print(f"  Regime: {macro['regime']}")
-            print(f"  Cycle:  {macro['cycle_phase']}")
-            ind = macro["indicators"]
-            print(f"  VIX:    {ind.get('vix', 0):.1f}")
-            print(f"  Yield spread: {ind.get('yield_spread', 0):.2f}%")
-            print(f"  Market breadth: {ind.get('market_breadth_pct', 0):.0f}%")
-            print(f"  SPY vs 200-SMA: {ind.get('spy_distance_pct', 0):+.1f}%")
-            adj = macro["adjustments"]
-            base_buy = config.trading.get("buy_threshold", 65)
-            eff_buy = base_buy + adj.get("buy_threshold", 0)
-            base_pos = config.trading.get("max_positions", 10)
-            eff_pos = max(1, base_pos + adj.get("max_positions", 0))
-            base_cash = config.trading.get("cash_reserve_pct", 0.20)
-            eff_cash = min(0.50, base_cash + adj.get("cash_reserve_add", 0))
-            print(f"\n  Adjusted parameters:")
-            print(f"    Buy threshold: {base_buy} → {eff_buy}")
-            print(f"    Max positions: {base_pos} → {eff_pos}")
-            print(f"    Cash reserve:  {base_cash:.0%} → {eff_cash:.0%}")
-            if adj.get("sector_limits"):
-                print(f"    Sector preferences ({macro['cycle_phase']}):")
-                by_limit = {}
-                for sector, limit in sorted(adj["sector_limits"].items()):
-                    by_limit.setdefault(limit, []).append(sector)
-                for limit in sorted(by_limit.keys(), reverse=True):
-                    label = "favored" if limit > 0.30 else ("neutral" if limit >= 0.30 else "disfavored")
-                    print(f"      {label} ({limit:.0%} cap): {', '.join(sorted(by_limit[limit]))}")
+            eff_buy = config.trading.get("buy_threshold", 65)
+            if pipeline.macro:
+                macro = pipeline.macro.get_macro_assessment()
+                print("\n=== MACRO ASSESSMENT ===")
+                print(f"  Score:  {macro['macro_score']}/100")
+                print(f"  Regime: {macro['regime']}")
+                print(f"  Cycle:  {macro['cycle_phase']}")
+                ind = macro["indicators"]
+                print(f"  VIX:    {ind.get('vix', 0):.1f}")
+                print(f"  Yield spread: {ind.get('yield_spread', 0):.2f}%")
+                print(f"  Market breadth: {ind.get('market_breadth_pct', 0):.0f}%")
+                print(f"  SPY vs 200-SMA: {ind.get('spy_distance_pct', 0):+.1f}%")
+                adj = macro["adjustments"]
+                base_buy = eff_buy
+                eff_buy = base_buy + adj.get("buy_threshold", 0)
+                base_pos = config.trading.get("max_positions", 10)
+                eff_pos = max(1, base_pos + adj.get("max_positions", 0))
+                base_cash = config.trading.get("cash_reserve_pct", 0.20)
+                eff_cash = min(0.50, base_cash + adj.get("cash_reserve_add", 0))
+                print(f"\n  Adjusted parameters:")
+                print(f"    Buy threshold: {base_buy} → {eff_buy}")
+                print(f"    Max positions: {base_pos} → {eff_pos}")
+                print(f"    Cash reserve:  {base_cash:.0%} → {eff_cash:.0%}")
+                if adj.get("sector_limits"):
+                    print(f"    Sector preferences ({macro['cycle_phase']}):")
+                    by_limit = {}
+                    for sector, limit in sorted(adj["sector_limits"].items()):
+                        by_limit.setdefault(limit, []).append(sector)
+                    for limit in sorted(by_limit.keys(), reverse=True):
+                        label = "favored" if limit > 0.30 else ("neutral" if limit >= 0.30 else "disfavored")
+                        print(f"      {label} ({limit:.0%} cap): {', '.join(sorted(by_limit[limit]))}")
+            else:
+                print("\n=== MACRO OVERLAY DISABLED ===")
+                print(f"  Using base config values (buy threshold = {eff_buy})")
 
             # Run scan and analyze
             candidates = pipeline.screener.scan()

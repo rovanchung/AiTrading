@@ -13,7 +13,8 @@ Automated stock trading system.
 - `config.yaml` — all tunable parameters (thresholds, weights, schedule, filters)
 - `.env` — API keys: Alpaca, FMP, Finnhub (gitignored, never commit)
 - `data/trading.db` — SQLite database (runtime, gitignored)
-- `main.py` — entry point: `--dry-run`, `--once`, `--dashboard`, or continuous scheduler
+- `aitrade` — CLI entry point (Python): interactive menu or `./aitrade <command>` (run, once, dry-run, scan, dashboard, db, logs, setup-db, install, info)
+- `main.py` — trading engine: `--dry-run`, `--once`, `--no-macro`, `--dashboard`, or continuous scheduler
 - `scripts/manual_scan.py` — manual analysis tool for debugging
 
 ## Module Layout

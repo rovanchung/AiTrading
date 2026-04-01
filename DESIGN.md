@@ -130,7 +130,7 @@ Read-only web UI for monitoring the trading system. Flask app with Jinja2 templa
 
 ## Economic/Macro Analysis (Portfolio Overlay)
 
-The macro module (`analyzer/economic.py`) operates as a **portfolio-level overlay** — it does not score individual stocks but instead adjusts how aggressively the system trades based on broad economic conditions.
+The macro module (`analyzer/economic.py`) operates as a **portfolio-level overlay** — it does not score individual stocks but instead adjusts how aggressively the system trades based on broad economic conditions. Set `macro.enabled: false` in `config.yaml` to disable the overlay entirely (base config values are used unchanged).
 
 ### How It Works
 

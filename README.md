@@ -30,8 +30,8 @@ For detailed information on operation modes, configuration, and safety features,
 Launch the interactive web dashboard to monitor positions, rankings, orders, and portfolio performance:
 
 ```bash
-python main.py --dashboard              # http://127.0.0.1:5000
-python main.py --dashboard --port 8080  # custom port
+./aitrade dashboard              # http://127.0.0.1:5000
+./aitrade dashboard --port 8080  # custom port
 ```
 
 The dashboard is **read-only** and can run safely alongside the trading system. Pages:
@@ -65,7 +65,7 @@ All parameters are in `config.yaml`. See `./aitrade info` for a full reference.
 
 Fundamental data is cached in SQLite and only refreshed every ~80 days (configurable via `fundamentals.staleness_days`). After 10 consecutive Alpaca failures, the system switches to yfinance-only mode until the next successful call.
 
-The macro overlay automatically adjusts trading parameters based on economic conditions. See [DESIGN.md](DESIGN.md) for regime/cycle details.
+The macro overlay automatically adjusts trading parameters based on economic conditions. Set `macro.enabled: false` in `config.yaml` to disable it (base config values are used as-is). See [DESIGN.md](DESIGN.md) for regime/cycle details.
 
 ## Files and Data
 
@@ -82,8 +82,8 @@ The macro overlay automatically adjusts trading parameters based on economic con
 
 ```
 AiTrading/
-├── aitrade               # CLI entry point — run with no args for interactive menu
-├── main.py               # Python entry point
+├── aitrade               # CLI entry point (Python) — interactive menu or ./aitrade <command>
+├── main.py               # Trading engine entry point
 ├── setup_db.py           # Database initialization
 ├── config.yaml           # Configuration
 ├── .env                  # API keys (gitignored)
