@@ -9,7 +9,6 @@ from core.config import Config
 from core.database import Database
 from executor.alpaca_client import AlpacaClient
 from executor.order_manager import OrderManager
-from monitor.position_monitor import PositionMonitor
 from monitor.alerts import AlertManager
 from orchestrator.pipeline import TradingPipeline
 
@@ -29,10 +28,6 @@ class TradingScheduler:
         self.alerts = AlertManager()
         self.order_mgr = OrderManager(config, db, self.broker)
         self.pipeline = TradingPipeline(config, db, self.broker, self.order_mgr, self.alerts)
-        self.monitor = PositionMonitor(
-            config, db, self.broker, self.order_mgr, self.alerts,
-            trade_lock=self.pipeline._trade_lock,
-        )
 
     def setup_jobs(self):
         """Register all scheduled jobs."""
@@ -99,16 +94,6 @@ class TradingScheduler:
                 name="Re-rank shortlist",
                 misfire_grace_time=300,
             )
-
-        # Position monitoring: every 30 seconds
-        monitor_interval = sc.get("monitor_interval_seconds", 30)
-        self.scheduler.add_job(
-            self.monitor.check_positions,
-            "interval",
-            seconds=monitor_interval,
-            id="position_monitor",
-            name="Position monitor",
-        )
 
         logger.info("All jobs scheduled:")
         for job in self.scheduler.get_jobs():

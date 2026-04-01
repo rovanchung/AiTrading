@@ -138,86 +138,62 @@ For each candidate, compute 4 sub-scores (each 0–100):
 
 **Step B6: Atomic Evaluate + Execute** (holds trade lock)
 
-This is the core trading decision block. The trade lock prevents concurrent access from the position monitor.
+This is the core trading decision block. The trade lock prevents concurrent access between cycles.
 
-1. **Get account state** from Alpaca (portfolio value, cash) — **API: Alpaca** (account)
-2. **Save portfolio snapshot** to DB (value, cash, invested, peak)
+1. **Sync pending orders** (`orchestrator/pipeline.py → _sync_pending_orders`):
+   - Check all DB pending buy orders against Alpaca status
+   - If filled: create `Position` record in DB
+   - If canceled/expired/rejected: mark order as canceled in DB
+   - Return map of currently open orders on Alpaca
 
-3. **Sell evaluation** (`portfolio/manager.py → _evaluate_sells`):
-   - Build "ideal portfolio" = top N candidates above buy threshold with technical >= 50
-   - For each held position:
-     - **Below threshold:** sell if composite score dropped below buy threshold
-     - **Outranked:** sell if position is no longer in ideal top-N AND a better non-held candidate exists to replace it
+2. **Get account state** from Alpaca (portfolio value, cash) — **API: Alpaca** (account)
+3. **Get live positions** from Alpaca (with avg_entry cost basis) — **API: Alpaca** (positions)
+4. **Save portfolio snapshot** to DB (value, cash, invested, peak)
 
-4. **Drawdown check** (`portfolio/manager.py → _check_drawdown`):
-   - Compare current portfolio value to peak (high-water mark from DB)
-   - **>= 15% drawdown:** LIQUIDATE all positions (overrides everything)
-   - **>= 10% drawdown:** REDUCE — sell half of every position (overrides normal signals)
+5. **Step 1 — Profit-based sells** (`portfolio/manager.py → _profit_based_sells`):
+   - For each held position, calculate P&L using Alpaca `avg_entry` (cost basis)
+   - **Profit take:** sell if P&L >= `profit_take_pct` (config, default +1%)
+   - **Loss cut:** sell if P&L <= `-loss_cut_pct` (config, default -0.5%)
+   - Sold tickers get `cooldown_hours` (config, default 2 hours) before re-buying
 
-5. **Buy evaluation** (`portfolio/manager.py → _evaluate_buys`):
-   - Calculate open slots = macro-adjusted max_positions - remaining positions
-   - Walk ranked candidates top-down:
-     - Skip if already held
-     - Skip if composite < macro-adjusted buy threshold
-     - Skip if technical < 50
-     - **Sector limit check** — macro-adjusted per-sector cap
-     - **Position sizing** — volatility-based via `portfolio/risk.py`
-     - **Cash reserve check** — ensure minimum cash reserve maintained
-     - Set stop-loss and take-profit levels
-     - Generate buy signal
+6. **Step 2 — Score-based redistribution** (`portfolio/manager.py → _redistribute`):
+   - Filter scored candidates to those with composite >= macro-adjusted `buy_threshold`
+   - Exclude tickers in cooldown (from profit/loss sells within last 2 hours)
+   - Calculate proportional allocation: `target_pct = score / total_qualifying_scores`
+   - Available capital = `purchase_power_pct` (config, default 50%) × portfolio value
+   - For each qualifying stock: compute target qty → sell excess or buy deficit
+   - Sell positions that no longer qualify (no cooldown for redistribution sells)
 
-6. **Execute signals** (`orchestrator/pipeline.py → _execute_signals`):
+7. **Execute signals** (`orchestrator/pipeline.py → _execute_signals`):
    - For each signal, get current price from OHLCV data
-   - Submit order via `OrderManager` -> **API: Alpaca** (order submission)
+   - Submit order via `OrderManager` → **API: Alpaca** (order submission)
    - On buy fill: create `Position` record in DB, log transaction
-   - On sell fill: close position in DB, compute P&L, log transaction
-   - On failure: trigger alert, continue to next signal
+   - On buy accepted (not yet filled): position created later by sync step on next cycle
+   - On full sell: close position in DB, compute P&L, log transaction
+   - On partial sell (redistribution): reduce position qty in DB, log transaction
+   - On sell failure (no position on Alpaca): close stale DB position, continue
+   - On other failure: trigger alert, continue to next signal
 
-7. **Retry logic:** If the cycle fails (network error, API timeout, etc.), retry every 30 seconds until a 12-minute deadline is reached.
+8. **Retry logic:** If the cycle fails (network error, API timeout, etc.), retry every 30 seconds until a 12-minute deadline is reached.
 
-**Step B6 subtotal:** Alpaca **1 account + T orders** (T = number of trades generated)
+**Step B6 subtotal:** Alpaca **2 + T orders** (1 account + 1 positions + T orders)
 
-**Cycle B total:** ~N+4+T API calls typical (1 clock + 2 OHLCV + N news + 1 account + T orders; macro 0 if cached)
+**Cycle B total:** ~N+5+T API calls typical (1 clock + 2 OHLCV + N news + 1 account + 1 positions + T orders; macro 0 if cached)
 
 ---
 
-#### C. Re-Rank Shortlist — Every 10 Minutes, 9:30 AM–3:59 PM Mon-Fri
+#### C. Unified Rebalance Cycle — Every 1 Minute, 9:30 AM–3:59 PM Mon-Fri
 
-**Purpose:** Fast intra-hour portfolio rebalancing using cached shortlist (~50 tickers instead of ~503).
+**Purpose:** Fast portfolio rebalancing using cached shortlist (~80 tickers). Combines position monitoring and re-ranking into a single cycle with profit-based sells and score-proportional redistribution.
 
-Fires at :09:50, :19:50, :29:50, :39:50, :49:50, :59:50 each hour.
+Interval is set by `schedule.rerank_interval_minutes` (default 10, currently 1).
 
 1. If no shortlist cached yet, run full cycle instead (if market open)
-2. Re-fetch OHLCV data for shortlist only (~50 tickers) — **APIs:** Alpaca → yfinance — **2 calls** (1 batch OHLCV + 1 SPY)
-3. Re-score all shortlist tickers — **APIs:** Alpaca news **~50 calls** (1/ticker), Finnhub **~0** (cached 80 days)
-4. If before market open (e.g., 9:29:50): defer execution via `threading.Timer` to 9:30 AM
-5. If market open: atomic evaluate + execute (same as step B6) — **APIs:** Alpaca **1+T calls** (1 account + T orders)
+2. Re-fetch OHLCV data for shortlist only (~80 tickers) — **APIs:** Alpaca → yfinance — **2 calls** (1 batch OHLCV + 1 SPY)
+3. Re-score all shortlist tickers — **APIs:** Alpaca news **~80 calls** (1/ticker), Finnhub **~0** (cached 80 days)
+4. Atomic evaluate + execute (same as step B6) — **APIs:** Alpaca **2+T calls** (1 account + 1 positions + T orders)
 
-**Cycle C total:** ~53+T API calls typical (2 OHLCV + ~50 news + 1 account + T orders). Dominant cost is 50 Alpaca news calls.
-
----
-
-#### D. Position Monitor — Every 30 Seconds
-
-**Purpose:** Protect capital with real-time stop-loss, trailing stop, and take-profit.
-
-1. Skip if market is closed — **API: Alpaca** — **1 call** (market clock)
-2. Load all open positions from DB
-3. Fetch live prices from Alpaca (`broker.get_positions()`) — **API: Alpaca** — **1 call** (positions list)
-4. For each position:
-   - **Save price snapshot** to DB (for charts/history)
-   - **Update high-water mark** if current price > previous high (used by trailing stop)
-   - **Check stop conditions** (`monitor/stop_loss.py`):
-     - **Hard stop-loss** — price fell below entry - configured %
-     - **Trailing stop** — price fell below high-water mark - configured %
-     - **Take-profit** — price rose above entry + configured %
-   - If any condition triggers:
-     - Acquire trade lock (prevents race with buy/sell cycles)
-     - Execute sell via OrderManager -> **API: Alpaca** (order submission)
-     - Close position in DB, compute P&L
-     - Log transaction, fire alert
-
-**Cycle D total:** Alpaca **2+S calls** per check (1 clock + 1 positions + S stop-triggered orders). Runs every 30s = ~780 checks/day.
+**Per cycle:** ~84+T API calls typical (2 OHLCV + ~80 news + 2 account/positions + T orders). Runs ~390 times/day.
 
 ---
 
@@ -264,40 +240,33 @@ Launches read-only monitoring dashboard:
 
 ```
  9:25 AM  Pre-market prep (universe + macro + screen + analyze + cache shortlist)
- 9:29:50  Re-rank shortlist (deferred execution at 9:30)
- 9:30 AM  Market open — deferred trades execute
- 9:39:50  Re-rank shortlist
- 9:49:50  Re-rank shortlist
- 9:59:50  Re-rank shortlist
-10:00 AM  Full trading cycle (full universe re-scan)
-10:09:50  Re-rank shortlist
-   ...    (re-rank every 10 min)
-11:00 AM  Full trading cycle
-   ...    (pattern continues hourly)
+ 9:30 AM  Market open
+ 9:31     Rebalance cycle (profit check + redistribution)
+   ...    (every 1 min)
+ 9:59     Rebalance cycle
+10:00 AM  Full trading cycle (full universe re-scan + rebalance)
+10:01     Rebalance cycle
+   ...    (full cycles hourly, rebalance every 1 min between)
  3:00 PM  Last full trading cycle
- 3:09:50  Re-rank shortlist
    ...
- 3:59:50  Last re-rank
- 4:00 PM  Market close — monitor stops checking
-
-Position monitor runs every 30 seconds throughout market hours.
+ 3:59     Last rebalance cycle
+ 4:00 PM  Market close
 ```
 
 ### Daily API Call Estimates (typical trading day)
 
-Assumes ~100 candidates pass screening, ~50 shortlist, ~5 trades/day.
+Assumes ~100 candidates pass screening, ~80 shortlist, ~10 trades/day. Rebalance interval is configurable (`schedule.rerank_interval_minutes`, currently 1 min).
 
 | Cycle | Frequency | Alpaca calls | Finnhub calls | yfinance calls | Total |
 |-------|-----------|-------------|---------------|----------------|-------|
 | A. Pre-Market Prep | 1×/day | ~102 (2 OHLCV + ~100 news) | ~0 (cached) | ~5 (index tickers) | ~107 |
-| B. Full Trading | 6×/day | ~618 (6 × [1 clock + 2 OHLCV + ~100 news + 1 acct]) | ~0 | 0–5 (macro if expired) | ~623 |
-| C. Re-Rank | ~36×/day | ~1,908 (36 × [2 OHLCV + ~50 news + 1 acct]) | ~0 | ~0 | ~1,908 |
-| D. Position Monitor | ~780×/day | ~1,560 (780 × 2) | 0 | 0 | ~1,560 |
-| **Daily total** | | **~4,188** | **~0** | **~5–10** | **~4,198** |
+| B. Full Trading | 6×/day | ~624 (6 × [1 clock + 2 OHLCV + ~100 news + 2 acct/pos]) | ~0 | 0–5 (macro if expired) | ~629 |
+| C. Rebalance | ~390×/day (1 min) | ~32,760 (390 × [2 OHLCV + ~80 news + 2 acct/pos]) | ~0 | ~0 | ~32,760 |
+| **Daily total** | | **~33,486** | **~0** | **~5–10** | **~33,496** |
 
 Notes:
 - Alpaca free tier allows 200 req/min (~288,000/day) — daily usage is well within limits
 - Finnhub calls are near zero on a typical day because fundamentals are cached 80 days
 - yfinance calls are only for index tickers (^VIX, ^TNX, ^IRX) that Alpaca doesn't support
 - FMP calls are near zero (only on Finnhub failure + FMP cache miss)
-- Trade orders add a small variable amount (T calls per cycle, ~5/day total)
+- Trade orders add a small variable amount (T calls per cycle, ~10/day total)

@@ -267,6 +267,18 @@ class Database:
         ).fetchall()
         return {r["ticker"] for r in rows}
 
+    def get_recently_profit_sold(self, hours: float = 2) -> set[str]:
+        """Return tickers sold for profit/loss reasons within the last N hours.
+        Does NOT include redistribution or rebalancing sells."""
+        rows = self.conn.execute(
+            """SELECT DISTINCT ticker FROM positions
+               WHERE status = 'closed'
+                 AND exit_time >= datetime('now', ? || ' hours')
+                 AND (exit_reason LIKE 'profit_take%' OR exit_reason LIKE 'loss_cut%')""",
+            (f"-{hours}",),
+        ).fetchall()
+        return {r["ticker"] for r in rows}
+
     # --- Fundamentals ---
     _FUNDAMENTALS_COLUMNS = {
         "eps_ttm", "eps_annual", "book_value_per_share_quarterly",

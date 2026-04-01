@@ -13,7 +13,6 @@ from screener.screener import StockScreener
 from screener.universe import refresh_universe
 from analyzer.analyzer import StockAnalyzer
 from portfolio.manager import PortfolioManager
-from portfolio.risk import calculate_stop_loss, calculate_take_profit
 from executor.alpaca_client import AlpacaClient
 from executor.order_manager import OrderManager
 from analyzer.economic import MacroAnalyzer
@@ -287,15 +286,11 @@ class TradingPipeline:
                     # Create position if one doesn't already exist
                     if db_order["ticker"] not in open_tickers:
                         qty = result.get("filled_qty") or db_order["qty"]
-                        stop = calculate_stop_loss(fill_price, self.config)
-                        tp = calculate_take_profit(fill_price, self.config)
                         pos = Position(
                             ticker=db_order["ticker"],
                             qty=qty,
                             entry_price=fill_price,
                             entry_time=datetime.now(),
-                            stop_loss=stop,
-                            take_profit=tp,
                             high_water_mark=fill_price,
                             status="open",
                             sector=self.db.get_stock_sector(db_order["ticker"]),
@@ -303,8 +298,7 @@ class TradingPipeline:
                         self.db.save_position(pos)
                         txn_logger.info(
                             f"BUY  | {db_order['ticker']} | qty={qty} | "
-                            f"price={fill_price:.2f} | stop={stop:.2f} | "
-                            f"tp={tp:.2f} | (reconciled from pending order)"
+                            f"price={fill_price:.2f} | (reconciled from pending order)"
                         )
                         open_tickers.add(db_order["ticker"])
                     logger.info(
@@ -356,6 +350,7 @@ class TradingPipeline:
 
             account = self.broker.get_account()
             positions = self.db.get_open_positions()
+            alpaca_positions = self.broker.get_positions()
 
             # Save portfolio snapshot
             peak = max(self.db.get_peak_value(), account["portfolio_value"])
@@ -365,7 +360,9 @@ class TradingPipeline:
             )
 
             # Generate signals
-            signals = self.portfolio_mgr.evaluate(scored, positions, account, data)
+            signals = self.portfolio_mgr.evaluate(
+                scored, positions, account, alpaca_positions, data
+            )
             if not signals:
                 logger.info("No trading signals generated")
                 return
@@ -438,22 +435,16 @@ class TradingPipeline:
 
                 if signal.action == "buy":
                     if order.status != "filled":
-                        # Order accepted but not yet filled (limit order).
-                        # Position will be created by _sync_pending_orders
-                        # once the fill is confirmed.
                         logger.info(
                             f"Buy order for {signal.ticker} accepted "
                             f"(status={order.status}), awaiting fill"
                         )
                     else:
-                        # Order filled immediately — create position record
                         pos = Position(
                             ticker=signal.ticker,
                             qty=order.qty,
                             entry_price=fill_price,
                             entry_time=datetime.now(),
-                            stop_loss=signal.stop_loss,
-                            take_profit=signal.take_profit,
                             high_water_mark=fill_price,
                             status="open",
                             sector=self.db.get_stock_sector(signal.ticker),
@@ -461,24 +452,31 @@ class TradingPipeline:
                         self.db.save_position(pos)
                         txn_logger.info(
                             f"BUY  | {signal.ticker} | qty={order.qty} | "
-                            f"price={fill_price:.2f} | stop={signal.stop_loss:.2f} | "
-                            f"tp={signal.take_profit:.2f} | sector={pos.sector}"
+                            f"price={fill_price:.2f} | reason={signal.reason}"
                         )
                         self.alerts.position_opened(signal.ticker, order.qty, fill_price)
 
                 elif signal.action == "sell":
                     existing = pos_map.get(signal.ticker)
                     if existing:
-                        self.db.close_position(existing.id, fill_price, signal.reason)
-                        pnl = (fill_price - existing.entry_price) * existing.qty
+                        sold_qty = min(signal.suggested_qty, existing.qty)
+                        if sold_qty >= existing.qty:
+                            # Full sell — close DB position
+                            self.db.close_position(existing.id, fill_price, signal.reason)
+                        else:
+                            # Partial sell — reduce qty in DB
+                            self.db.update_position(
+                                existing.id, qty=existing.qty - sold_qty
+                            )
+                        pnl = (fill_price - existing.entry_price) * sold_qty
                         pnl_pct = ((fill_price - existing.entry_price) / existing.entry_price) * 100
                         txn_logger.info(
-                            f"SELL | {signal.ticker} | qty={existing.qty} | "
+                            f"SELL | {signal.ticker} | qty={sold_qty} | "
                             f"entry={existing.entry_price:.2f} | exit={fill_price:.2f} | "
                             f"pnl=${pnl:.2f} ({pnl_pct:+.1f}%) | reason={signal.reason}"
                         )
                         self.alerts.position_closed(
-                            signal.ticker, signal.suggested_qty, fill_price,
+                            signal.ticker, sold_qty, fill_price,
                             signal.reason, pnl,
                         )
 

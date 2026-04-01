@@ -1,17 +1,21 @@
 trading:
-  max_positions: 15
-  max_position_pct: 0.06
-  cash_reserve_pct: 0.10
-  risk_per_trade_pct: 0.02
   buy_threshold: 60
-  stop_loss_pct: 0.05
-  trailing_stop_pct: 0.05
-  cooldown_hours: 1
-  take_profit_pct: 0.15
-  max_sector_pct: 0.30
-  drawdown_reduce_pct: 0.10
-  drawdown_liquidate_pct: 0.15
+  profit_take_pct: 0.01        # +1% from Alpaca avg cost -> sell
+  loss_cut_pct: 0.005           # -0.5% from Alpaca avg cost -> sell
+  purchase_power_pct: 0.50      # 50% of portfolio value for redistribution
+  cooldown_hours: 2             # hours before re-buying a profit/loss sold ticker
   paper_trading: true
+  # deprecated — no longer used by the unified cycle:
+  # max_positions: 15
+  # max_position_pct: 0.06
+  # cash_reserve_pct: 0.10
+  # risk_per_trade_pct: 0.02
+  # stop_loss_pct: 0.05
+  # trailing_stop_pct: 0.05
+  # take_profit_pct: 0.15
+  # max_sector_pct: 0.30
+  # drawdown_reduce_pct: 0.10
+  # drawdown_liquidate_pct: 0.15
 
 scoring:
   technical_weight: 0.35
@@ -34,7 +38,6 @@ schedule:
   scan_interval_minutes: 60
   rerank_interval_minutes: 1
   shortlist_size: 80
-  monitor_interval_seconds: 30
 
 fundamentals:
   staleness_days: 80          # skip API call if data is < 80 days old

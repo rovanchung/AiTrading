@@ -83,22 +83,13 @@ def main():
                 adj = macro["adjustments"]
                 base_buy = eff_buy
                 eff_buy = base_buy + adj.get("buy_threshold", 0)
-                base_pos = config.trading.get("max_positions", 10)
-                eff_pos = max(1, base_pos + adj.get("max_positions", 0))
-                base_cash = config.trading.get("cash_reserve_pct", 0.20)
-                eff_cash = min(0.50, base_cash + adj.get("cash_reserve_add", 0))
                 print(f"\n  Adjusted parameters:")
                 print(f"    Buy threshold: {base_buy} → {eff_buy}")
-                print(f"    Max positions: {base_pos} → {eff_pos}")
-                print(f"    Cash reserve:  {base_cash:.0%} → {eff_cash:.0%}")
-                if adj.get("sector_limits"):
-                    print(f"    Sector preferences ({macro['cycle_phase']}):")
-                    by_limit = {}
-                    for sector, limit in sorted(adj["sector_limits"].items()):
-                        by_limit.setdefault(limit, []).append(sector)
-                    for limit in sorted(by_limit.keys(), reverse=True):
-                        label = "favored" if limit > 0.30 else ("neutral" if limit >= 0.30 else "disfavored")
-                        print(f"      {label} ({limit:.0%} cap): {', '.join(sorted(by_limit[limit]))}")
+                profit_take = config.trading.get("profit_take_pct", 0.01)
+                loss_cut = config.trading.get("loss_cut_pct", 0.005)
+                pp = config.trading.get("purchase_power_pct", 0.50)
+                print(f"    Profit take: +{profit_take:.1%}  |  Loss cut: -{loss_cut:.1%}")
+                print(f"    Purchase power: {pp:.0%} of portfolio")
             else:
                 print("\n=== MACRO OVERLAY DISABLED ===")
                 print(f"  Using base config values (buy threshold = {eff_buy})")
@@ -109,7 +100,7 @@ def main():
                 data = pipeline.screener.get_data_for_tickers(candidates)
                 spy_df = pipeline.screener._fetch_single("SPY")
                 scored = pipeline.analyzer.analyze_batch(candidates, data, spy_df)
-                qualifying = [s for s in scored if s.composite >= eff_buy and s.technical >= 50]
+                qualifying = [s for s in scored if s.composite >= eff_buy]
                 print(f"\n=== TOP CANDIDATES (buy threshold = {eff_buy}) ===")
                 for s in scored[:20]:
                     marker = " ✓" if s in qualifying else ""

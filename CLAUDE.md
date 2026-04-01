@@ -26,10 +26,10 @@ Automated stock trading system.
   - `data_provider.py` — Unified data layer: routes to Alpaca (OHLCV/news), Finnhub→FMP→yfinance (fundamentals), yfinance (fallback + index tickers)
 - `screener/` — S&P 500 universe fetch, filter chain, candidate selection
 - `analyzer/` — technical, fundamental, momentum, sentiment scoring (0-100 each) + economic macro overlay
-- `portfolio/` — risk sizing, allocation rules, buy/sell decision engine
+- `portfolio/` — profit-based sells + score-proportional redistribution engine
 - `executor/` — Alpaca broker integration, order management with retries
-- `monitor/` — stop-loss, trailing stop, take-profit, position monitoring
-- `orchestrator/` — trading pipeline, APScheduler job management
+- `monitor/` — alerts (stop-loss/trailing/TP logic is deprecated, unused)
+- `orchestrator/` — trading pipeline, APScheduler job management (unified 1-min rebalance cycle)
 - `dashboard/` — Flask web dashboard (read-only DB access, dark theme, Chart.js + DataTables)
   - `app.py` — Flask app factory, template filters, standalone entry point
   - `db.py` — Read-only SQLite helper (PRAGMA query_only=ON)

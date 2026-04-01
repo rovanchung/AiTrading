@@ -49,13 +49,10 @@ In continuous mode (`./aitrade run`), the system runs these jobs automatically:
 | Job | Schedule | Config key | What it does |
 |-----|----------|------------|--------------|
 | A. Pre-market prep | 9:25 AM ET, Mon–Fri | `schedule.prep_minutes_before_open` | Universe refresh, macro assessment, screen ~500, analyze, cache shortlist |
-| B. Full trading cycle | Hourly at :00, 10 AM–3 PM ET | `schedule.market_open`, `schedule.market_close` | Full universe screen → analyze → evaluate sells/buys → execute orders (retries up to 12 min) |
-| C. Re-rank shortlist | Every 10 min, 9:30 AM–3:59 PM ET | `schedule.rerank_interval_minutes` | Re-fetch and re-score shortlist (~50 tickers) → evaluate sells/buys → execute orders |
-| D. Position monitor | Every 30 sec | `schedule.monitor_interval_seconds` | Check stop-loss, trailing stop, take-profit → execute sells |
+| B. Full trading cycle | Hourly at :00, 10 AM–3 PM ET | `schedule.market_open`, `schedule.market_close` | Full universe screen → analyze → profit check + redistribution → execute orders (retries up to 12 min) |
+| C. Rebalance cycle | Every 1 min, 9:30 AM–3:59 PM ET | `schedule.rerank_interval_minutes` | Re-score shortlist (~80 tickers) → profit-based sells (≥+1% or ≤-0.5%) → score-proportional redistribution → execute orders |
 
-The first re-rank fires at 9:29:50 AM, completes analysis pre-open, and defers trade execution to exactly 9:30 AM via a timer. Full cycles refresh the entire universe hourly. Re-ranks use a cached shortlist (~50 tickers) for faster turnaround.
-
-Both full cycles (B) and re-ranks (C) can buy and sell. If a held stock drops in ranking and a better candidate exists, it gets replaced automatically. The trading portion (get positions + execute orders) is atomic across all jobs via a shared lock.
+Full cycles refresh the entire universe hourly. Rebalance cycles use a cached shortlist for faster turnaround. Both use the same two-step logic: (1) sell positions hitting profit/loss thresholds with 2-hour cooldown, (2) redistribute 50% of portfolio value proportionally by score among qualifying stocks. The trading portion is atomic across all jobs via a shared lock.
 
 See [WORKFLOW.md](WORKFLOW.md) for the detailed step-by-step flow, API providers called per step, rate limits, and daily API call estimates.
 
