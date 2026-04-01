@@ -296,11 +296,15 @@ class TradingPipeline:
                 logger.info("No trading signals generated")
                 return
 
-            # Filter out buy signals for tickers with pending buy orders
+            # Filter out buy signals for tickers with pending buy orders,
+            # and sell signals for tickers that only have a pending buy (no filled position).
             filtered = []
             for s in signals:
                 if s.action == "buy" and s.ticker in pending_buy_tickers:
                     logger.info(f"Skipping buy {s.ticker}: pending buy order exists")
+                    continue
+                if s.action == "sell" and s.ticker in pending_buy_tickers:
+                    logger.info(f"Skipping sell {s.ticker}: only has pending buy, no filled position")
                     continue
                 filtered.append(s)
 
