@@ -37,6 +37,34 @@ PYTHON = os.environ.get("PYTHON", os.path.expanduser("~/python_env/torch-env/bin
 PIP = os.environ.get("PIP", os.path.expanduser("~/python_env/torch-env/bin/pip"))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "trading.db")
 
+# Active version (set by menu or --version flag)
+ACTIVE_VERSION = None
+
+def _version_db_path():
+    """Return the DB path for the active version."""
+    if ACTIVE_VERSION:
+        import yaml
+        with open(os.path.join(PROJECT_ROOT, "config.yaml")) as f:
+            cfg = yaml.safe_load(f)
+        accounts = cfg.get("accounts", {})
+        acct = accounts.get(ACTIVE_VERSION, {})
+        rel = acct.get("database_path")
+        if rel:
+            return os.path.join(PROJECT_ROOT, rel)
+    return DB_PATH
+
+def _version_args():
+    """Return --version args list for the active version."""
+    if ACTIVE_VERSION:
+        return ["--version", ACTIVE_VERSION]
+    return []
+
+def _version_label():
+    """Short label for display."""
+    if ACTIVE_VERSION:
+        return f" [{ACTIVE_VERSION.upper()}]"
+    return ""
+
 # ── Colors ──────────────────────────────────────────────────────────────────
 
 BOLD = "\033[1m"
@@ -190,7 +218,7 @@ def show_command(cmd_parts):
 
 def cmd_run(args):
     """Start continuous trading scheduler."""
-    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py")]
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py")] + _version_args()
     if "--no-macro" in args:
         cmd.append("--no-macro")
     os.execv(PYTHON, cmd)
@@ -198,7 +226,7 @@ def cmd_run(args):
 
 def cmd_once(args):
     """Run one full scan-analyze-trade cycle."""
-    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py"), "--once"]
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py"), "--once"] + _version_args()
     if "--no-macro" in args:
         cmd.append("--no-macro")
     subprocess.run(cmd)
@@ -206,7 +234,7 @@ def cmd_once(args):
 
 def cmd_dry_run(args):
     """Scan and analyze only, no trades executed."""
-    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py"), "--dry-run"]
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py"), "--dry-run"] + _version_args()
     if "--no-macro" in args:
         cmd.append("--no-macro")
     subprocess.run(cmd)
@@ -214,7 +242,7 @@ def cmd_dry_run(args):
 
 def cmd_dashboard(args):
     """Launch the web dashboard."""
-    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py"), "--dashboard"]
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py"), "--dashboard"] + _version_args()
     for i, a in enumerate(args):
         if a == "--port" and i + 1 < len(args):
             cmd.extend(["--port", args[i + 1]])
@@ -325,8 +353,9 @@ def cmd_logs(args):
 
 def cmd_db(args):
     """Query the SQLite database."""
-    if not os.path.isfile(DB_PATH):
-        print(f"  Database not found at {DB_PATH}")
+    db_path = _version_db_path()
+    if not os.path.isfile(db_path):
+        print(f"  Database not found at {db_path}")
         print(f"  Run: ./aitrade setup-db")
         return
 
@@ -362,7 +391,7 @@ def cmd_db(args):
         return
 
     title, sql = queries[query_name]
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA query_only = ON")
     cur = conn.execute(sql)
     cols = [d[0] for d in cur.description]
@@ -488,10 +517,29 @@ def cmd_info(_args):
 
 # ── Interactive menus ───────────────────────────────────────────────────────
 
+def menu_version():
+    """Select trading strategy version."""
+    global ACTIVE_VERSION
+    choice = pick_menu("Select Version", [
+        {"label": "V1 — Original",    "desc": "1% profit / 0.5% loss / no hold time", "value": "v1"},
+        {"label": "V2 — Anti-churn",  "desc": "3% profit / 2% loss / 30m hold / hysteresis", "value": "v2"},
+    ], back_label="Back")
+
+    if choice is None:
+        return False
+    ACTIVE_VERSION = choice
+    return True
+
+
 def menu_main():
     """Top-level interactive menu."""
+    # Version selection first
+    if not menu_version():
+        return
+
     while True:
-        choice = pick_menu("AiTrading", [
+        ver = ACTIVE_VERSION.upper() if ACTIVE_VERSION else "?"
+        choice = pick_menu(f"AiTrading [{ver}]", [
             {"label": "Dry run",        "desc": "Scan and analyze, no trades",     "value": "dry-run"},
             {"label": "Run once",       "desc": "One full scan-analyze-trade cycle","value": "once"},
             {"label": "Run continuous", "desc": "Start trading scheduler",          "value": "run"},
@@ -501,20 +549,23 @@ def menu_main():
             {"label": "Logs",           "desc": "View application or trade logs",   "value": "logs"},
             {"label": "Setup",          "desc": "Install deps, API keys, database", "value": "setup"},
             {"label": "Info",           "desc": "Detailed reference guide",         "value": "info"},
+            {"label": "Switch version", "desc": f"Currently: {ver}",               "value": "switch"},
             {"label": "Exit",           "desc": "",                                 "value": "exit"},
         ])
 
         if choice is None or choice == "exit":
             return
 
-        if choice == "dry-run":
+        if choice == "switch":
+            menu_version()
+        elif choice == "dry-run":
             menu_trading_mode("dry-run")
         elif choice == "once":
             menu_trading_mode("once")
         elif choice == "run":
             menu_trading_mode("run")
         elif choice == "dashboard":
-            show_command(["dashboard"])
+            show_command(["dashboard"] + _version_args())
             cmd_dashboard([])
         elif choice == "scan":
             menu_scan()
@@ -634,6 +685,8 @@ def menu_setup():
 # ── CLI dispatch ────────────────────────────────────────────────────────────
 
 def cli_main():
+    global ACTIVE_VERSION
+
     # Graceful Ctrl-C everywhere
     signal.signal(signal.SIGINT, lambda *_: (print(f"\n{SHOW_CURSOR}"), sys.exit(0)))
 
@@ -644,8 +697,16 @@ def cli_main():
         menu_main()
         return
 
-    command = sys.argv[1]
-    rest = sys.argv[2:]
+    # Extract --version flag before dispatch
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == "--version" and i + 1 < len(args):
+            ACTIVE_VERSION = args[i + 1]
+            args = args[:i] + args[i + 2:]
+            break
+
+    command = args[0] if args else "help"
+    rest = args[1:]
 
     dispatch = {
         "run":       cmd_run,

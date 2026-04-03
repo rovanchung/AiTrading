@@ -90,8 +90,46 @@ class Config:
         return self.get("logging.level", "INFO")
 
 
-def load_config(config_path: str = "config.yaml") -> Config:
-    """Load configuration from YAML file and .env."""
+def activate_version(version: str, config_path: str = "config.yaml") -> None:
+    """Set environment variables for a trading version (v1 or v2).
+
+    Swaps ALPACA_API_KEY / ALPACA_SECRET_KEY to the version-specific
+    credentials so all modules (including alpaca_data.py which reads
+    os.environ directly) use the correct account.
+
+    Must be called BEFORE any Alpaca client is initialized.
+    """
+    project_root = Path(__file__).parent.parent
+    load_dotenv(project_root / ".env")
+
+    suffix = f"_{version.upper()}"  # _V1 or _V2
+    api_key = os.environ.get(f"ALPACA_API_KEY{suffix}", "")
+    secret_key = os.environ.get(f"ALPACA_SECRET_KEY{suffix}", "")
+
+    if not api_key or not secret_key or api_key == "CHANGE_ME":
+        raise ConfigError(
+            f"Alpaca credentials not configured for {version}. "
+            f"Set ALPACA_API_KEY{suffix} and ALPACA_SECRET_KEY{suffix} in .env"
+        )
+
+    os.environ["ALPACA_API_KEY"] = api_key
+    os.environ["ALPACA_SECRET_KEY"] = secret_key
+
+    # Reset lazy-initialized alpaca data clients so they pick up new creds
+    try:
+        from core import alpaca_data
+        alpaca_data._stock_client = None
+        alpaca_data._news_client = None
+    except ImportError:
+        pass
+
+
+def load_config(config_path: str = "config.yaml", version: str = None) -> Config:
+    """Load configuration from YAML file and .env.
+
+    If version is specified (v1/v2), applies account-specific overrides
+    for database path and strategy version.
+    """
     project_root = Path(__file__).parent.parent
     load_dotenv(project_root / ".env")
 
@@ -101,5 +139,14 @@ def load_config(config_path: str = "config.yaml") -> Config:
 
     with open(config_file) as f:
         data = yaml.safe_load(f)
+
+    # Apply version-specific overrides
+    if version:
+        accounts = data.get("accounts", {})
+        acct = accounts.get(version, {})
+        if acct.get("database_path"):
+            data.setdefault("database", {})["path"] = acct["database_path"]
+        if acct.get("strategy_version"):
+            data.setdefault("trading", {})["strategy_version"] = acct["strategy_version"]
 
     return Config(data)

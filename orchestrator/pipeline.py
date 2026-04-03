@@ -115,7 +115,7 @@ class TradingPipeline:
             try:
                 # Check market is open
                 if not self.broker.is_market_open():
-                    logger.info("Market is closed, skipping cycle")
+                    logger.info("Market is closed, skipping full cycle")
                     return
 
                 # Step 1: Screen for candidates
@@ -186,7 +186,11 @@ class TradingPipeline:
         and execution is deferred to market open via a timer.
         """
         if not self.broker.is_market_open():
+            if not getattr(self, "_rerank_closed_logged", False):
+                logger.info("Market is closed, skipping rerank cycles")
+                self._rerank_closed_logged = True
             return
+        self._rerank_closed_logged = False
 
         if not self._shortlist:
             logger.warning("No shortlist cached, running full cycle instead")
@@ -240,8 +244,9 @@ class TradingPipeline:
         - If canceled/expired on Alpaca: mark order as canceled in DB
         Also returns the map of currently open orders on Alpaca.
         """
-        # 1. Reconcile DB pending buy orders against Alpaca
+        # 1. Reconcile DB pending orders against Alpaca
         self._reconcile_pending_buys()
+        self._reconcile_pending_sells()
 
         # 2. Get currently open orders from Alpaca
         try:
@@ -259,6 +264,49 @@ class TradingPipeline:
             logger.info(f"Pending orders: {len(open_orders)} for {tickers}")
 
         return by_ticker
+
+    def _reconcile_pending_sells(self):
+        """Check DB pending sell orders against Alpaca and reconcile."""
+        pending = self.db.get_pending_sell_orders()
+        if not pending:
+            return
+
+        for db_order in pending:
+            try:
+                result = self.broker.get_order(db_order["alpaca_order_id"])
+                alpaca_status = result["status"].lower().replace("orderstatus.", "")
+
+                if alpaca_status == "filled":
+                    fill_price = result["filled_price"]
+                    self.db.update_order(
+                        db_order["id"],
+                        status="filled",
+                        filled_price=fill_price,
+                        filled_at=datetime.now(),
+                    )
+                    logger.info(
+                        f"Reconciled filled sell for {db_order['ticker']} "
+                        f"@ {fill_price}"
+                    )
+
+                elif alpaca_status in ("canceled", "cancelled", "expired", "rejected"):
+                    self.db.update_order(
+                        db_order["id"], status="canceled"
+                    )
+                    logger.info(
+                        f"Sell order for {db_order['ticker']} was {alpaca_status}, "
+                        f"updated DB"
+                    )
+
+                elif alpaca_status in ("new", "accepted", "pending_new",
+                                       "partially_filled"):
+                    pass  # still active, leave as-is
+
+            except Exception as e:
+                logger.warning(
+                    f"Failed to reconcile sell order {db_order['alpaca_order_id']} "
+                    f"for {db_order['ticker']}: {e}"
+                )
 
     def _reconcile_pending_buys(self):
         """Check DB pending buy orders against Alpaca and reconcile."""
@@ -347,6 +395,10 @@ class TradingPipeline:
                 t for t, orders in pending_orders.items()
                 if any("buy" in o["side"].lower() for o in orders)
             }
+            pending_sell_tickers = {
+                t for t, orders in pending_orders.items()
+                if any("sell" in o["side"].lower() for o in orders)
+            }
 
             account = self.broker.get_account()
             positions = self.db.get_open_positions()
@@ -367,8 +419,7 @@ class TradingPipeline:
                 logger.info("No trading signals generated")
                 return
 
-            # Filter out buy signals for tickers with pending buy orders,
-            # and sell signals for tickers that only have a pending buy (no filled position).
+            # Filter out signals for tickers with pending orders on the same side.
             filtered = []
             for s in signals:
                 if s.action == "buy" and s.ticker in pending_buy_tickers:
@@ -376,6 +427,9 @@ class TradingPipeline:
                     continue
                 if s.action == "sell" and s.ticker in pending_buy_tickers:
                     logger.info(f"Skipping sell {s.ticker}: only has pending buy, no filled position")
+                    continue
+                if s.action == "sell" and s.ticker in pending_sell_tickers:
+                    logger.info(f"Skipping sell {s.ticker}: pending sell order already exists")
                     continue
                 filtered.append(s)
 

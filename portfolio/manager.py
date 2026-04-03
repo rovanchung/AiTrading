@@ -1,6 +1,7 @@
 """Portfolio manager — profit-based sells + score-proportional redistribution."""
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -20,6 +21,10 @@ class PortfolioManager:
         self.db = db
         self.tc = config.trading
         self._macro_adjustments = None
+
+    @property
+    def _is_v2(self) -> bool:
+        return self.tc.get("strategy_version", "v1") == "v2"
 
     def set_macro_adjustments(self, adjustments: Optional[dict]):
         """Apply macro-economic parameter adjustments for this cycle."""
@@ -48,7 +53,7 @@ class PortfolioManager:
     ) -> list[Signal]:
         """
         Two-step portfolio evaluation:
-        1. Profit-based sells: sell if P&L >= +1% or <= -0.5% (from Alpaca avg cost)
+        1. Profit-based sells: sell if P&L >= +profit_take% or <= -loss_cut%
         2. Score-based redistribution: allocate purchase power proportionally by score
         """
         signals = []
@@ -81,10 +86,17 @@ class PortfolioManager:
     ) -> tuple[list[Signal], set[str]]:
         """Step 1: Sell positions that hit profit or loss thresholds.
 
-        Returns (sell_signals, tickers_sold) — sold tickers get 2-hour cooldown.
+        Returns (sell_signals, tickers_sold) — sold tickers get cooldown.
         """
-        profit_take = self.tc.get("profit_take_pct", 0.01)
-        loss_cut = self.tc.get("loss_cut_pct", 0.005)
+        if self._is_v2:
+            profit_take = self.tc.get("v2_profit_take_pct", 0.03)
+            loss_cut = self.tc.get("v2_loss_cut_pct", 0.02)
+            min_hold_minutes = self.tc.get("v2_min_hold_minutes", 30)
+        else:
+            profit_take = self.tc.get("profit_take_pct", 0.01)
+            loss_cut = self.tc.get("loss_cut_pct", 0.005)
+            min_hold_minutes = 0
+
         signals = []
         sold_tickers = set()
 
@@ -92,6 +104,12 @@ class PortfolioManager:
             live = alpaca_map.get(pos.ticker)
             if not live:
                 continue
+
+            # v2: skip positions not held long enough
+            if min_hold_minutes > 0 and pos.entry_time:
+                held_minutes = (datetime.now() - pos.entry_time).total_seconds() / 60
+                if held_minutes < min_hold_minutes:
+                    continue
 
             avg_entry = live["avg_entry"]
             current_price = live["current_price"]
@@ -135,6 +153,15 @@ class PortfolioManager:
         purchase_power_pct = self.tc.get("purchase_power_pct", 0.50)
         cooldown_hours = self.tc.get("cooldown_hours", 2)
 
+        if self._is_v2:
+            sell_threshold = self.tc.get("v2_sell_threshold", 55)
+            dead_band_pct = self.tc.get("v2_rebalance_dead_band_pct", 0.03)
+            min_hold_minutes = self.tc.get("v2_min_hold_minutes", 30)
+        else:
+            sell_threshold = buy_threshold  # no hysteresis in v1
+            dead_band_pct = 0.0
+            min_hold_minutes = 0
+
         # Get tickers on cooldown from prior profit/loss sells
         cooldown_tickers = self.db.get_recently_profit_sold(cooldown_hours)
         # Also exclude tickers being sold this cycle
@@ -142,7 +169,10 @@ class PortfolioManager:
         if cooldown_tickers:
             logger.info(f"Cooldown active for: {cooldown_tickers}")
 
-        # Filter qualifying candidates
+        # Build score lookup
+        score_map = {c.ticker: c.composite for c in candidates}
+
+        # Filter qualifying candidates (for buys: must meet buy_threshold)
         qualifying = [
             c for c in candidates
             if c.composite >= buy_threshold and c.ticker not in excluded
@@ -150,7 +180,11 @@ class PortfolioManager:
 
         if not qualifying:
             # Sell all held positions that aren't being sold in step 1
-            return self._sell_non_qualifying(positions, profit_sold_tickers)
+            # v2: respect sell_threshold hysteresis
+            return self._sell_non_qualifying(
+                positions, profit_sold_tickers, score_map,
+                sell_threshold, min_hold_minutes,
+            )
 
         # Calculate proportional allocation
         total_score = sum(c.composite for c in qualifying)
@@ -165,6 +199,9 @@ class PortfolioManager:
 
         qualifying_tickers = {c.ticker for c in qualifying}
         signals = []
+
+        # Build position entry-time lookup for min-hold check
+        pos_entry_map = {p.ticker: p.entry_time for p in positions}
 
         # Generate signals to reach target allocation
         for c in qualifying:
@@ -188,9 +225,15 @@ class PortfolioManager:
             current_qty = held_map.get(c.ticker, 0)
 
             if target_qty > current_qty:
-                # Buy more
+                # Buy more — check dead band
                 buy_qty = target_qty - current_qty
                 if buy_qty > 0:
+                    # v2: skip if allocation difference is within dead band
+                    if dead_band_pct > 0 and current_qty > 0:
+                        current_dollars = current_qty * current_price
+                        alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
+                        if alloc_diff <= dead_band_pct:
+                            continue
                     signals.append(Signal(
                         ticker=c.ticker, action="buy",
                         reason=f"redistribution (score={c.composite:.1f}, "
@@ -198,9 +241,22 @@ class PortfolioManager:
                         score=c.composite, suggested_qty=buy_qty,
                     ))
             elif target_qty < current_qty:
-                # Sell excess (no cooldown)
+                # Sell excess — check dead band and min hold
                 sell_qty = current_qty - target_qty
                 if sell_qty > 0:
+                    # v2: skip if allocation difference is within dead band
+                    if dead_band_pct > 0:
+                        current_dollars = current_qty * current_price
+                        alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
+                        if alloc_diff <= dead_band_pct:
+                            continue
+                    # v2: respect min hold time for redistribution sells too
+                    if min_hold_minutes > 0:
+                        entry_time = pos_entry_map.get(c.ticker)
+                        if entry_time:
+                            held_minutes = (datetime.now() - entry_time).total_seconds() / 60
+                            if held_minutes < min_hold_minutes:
+                                continue
                     signals.append(Signal(
                         ticker=c.ticker, action="sell",
                         reason=f"redistribution_reduce (score={c.composite:.1f}, "
@@ -208,12 +264,21 @@ class PortfolioManager:
                         score=c.composite, suggested_qty=sell_qty,
                     ))
 
-        # Sell positions that no longer qualify (no cooldown)
+        # Sell positions that no longer qualify
         for pos in positions:
             if (
                 pos.ticker not in qualifying_tickers
                 and pos.ticker not in profit_sold_tickers
             ):
+                ticker_score = score_map.get(pos.ticker, 0)
+                # v2: only sell if score dropped below sell_threshold (hysteresis)
+                if ticker_score >= sell_threshold:
+                    continue
+                # v2: respect min hold time
+                if min_hold_minutes > 0 and pos.entry_time:
+                    held_minutes = (datetime.now() - pos.entry_time).total_seconds() / 60
+                    if held_minutes < min_hold_minutes:
+                        continue
                 signals.append(Signal(
                     ticker=pos.ticker, action="sell",
                     reason="no_longer_qualifies",
@@ -223,12 +288,25 @@ class PortfolioManager:
         return signals
 
     def _sell_non_qualifying(
-        self, positions: list[Position], already_sold: set[str]
+        self, positions: list[Position], already_sold: set[str],
+        score_map: dict[str, float] = None,
+        sell_threshold: float = 0,
+        min_hold_minutes: int = 0,
     ) -> list[Signal]:
         """Sell all held positions that aren't already being sold."""
         signals = []
         for pos in positions:
             if pos.ticker not in already_sold:
+                # v2: respect hysteresis — keep if score still above sell_threshold
+                if score_map and sell_threshold > 0:
+                    ticker_score = score_map.get(pos.ticker, 0)
+                    if ticker_score >= sell_threshold:
+                        continue
+                # v2: respect min hold time
+                if min_hold_minutes > 0 and pos.entry_time:
+                    held_minutes = (datetime.now() - pos.entry_time).total_seconds() / 60
+                    if held_minutes < min_hold_minutes:
+                        continue
                 signals.append(Signal(
                     ticker=pos.ticker, action="sell",
                     reason="no_longer_qualifies",

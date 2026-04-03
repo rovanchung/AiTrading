@@ -1,21 +1,17 @@
 trading:
+  strategy_version: "v2"        # "v1" = original, "v2" = anti-churn improvements
   buy_threshold: 60
-  profit_take_pct: 0.01        # +1% from Alpaca avg cost -> sell
-  loss_cut_pct: 0.005           # -0.5% from Alpaca avg cost -> sell
+  profit_take_pct: 0.01        # v1: +1% from Alpaca avg cost -> sell
+  loss_cut_pct: 0.005           # v1: -0.5% from Alpaca avg cost -> sell
   purchase_power_pct: 0.50      # 50% of portfolio value for redistribution
   cooldown_hours: 2             # hours before re-buying a profit/loss sold ticker
   paper_trading: true
-  # deprecated — no longer used by the unified cycle:
-  # max_positions: 15
-  # max_position_pct: 0.06
-  # cash_reserve_pct: 0.10
-  # risk_per_trade_pct: 0.02
-  # stop_loss_pct: 0.05
-  # trailing_stop_pct: 0.05
-  # take_profit_pct: 0.15
-  # max_sector_pct: 0.30
-  # drawdown_reduce_pct: 0.10
-  # drawdown_liquidate_pct: 0.15
+  # v2 strategy parameters (ignored when strategy_version = v1):
+  v2_profit_take_pct: 0.03      # +3% from Alpaca avg cost -> sell
+  v2_loss_cut_pct: 0.02         # -2% from Alpaca avg cost -> sell
+  v2_min_hold_minutes: 30       # don't sell until held for this long
+  v2_sell_threshold: 55         # score must drop below this to trigger no_longer_qualifies
+  v2_rebalance_dead_band_pct: 0.03  # skip redistribution trades unless allocation off by >3%
 
 scoring:
   technical_weight: 0.35
@@ -59,3 +55,13 @@ logging:
 
 database:
   path: "data/trading.db"
+
+accounts:
+  v1:
+    database_path: "data/trading_v1.db"
+    strategy_version: "v1"
+    # Uses ALPACA_API_KEY / ALPACA_SECRET_KEY from .env
+  v2:
+    database_path: "data/trading_v2.db"
+    strategy_version: "v2"
+    # Uses ALPACA_API_KEY_V2 / ALPACA_SECRET_KEY_V2 from .env

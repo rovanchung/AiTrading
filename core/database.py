@@ -368,6 +368,19 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_pending_sell_orders(self) -> list[dict]:
+        """Get sell orders that haven't been filled or failed yet."""
+        rows = self.conn.execute(
+            """SELECT id, alpaca_order_id, ticker, qty, status
+               FROM orders
+               WHERE side = 'sell'
+                 AND status NOT IN ('filled', 'failed', 'canceled', 'cancelled')
+                 AND alpaca_order_id IS NOT NULL
+                 AND alpaca_order_id != ''
+               ORDER BY submitted_at DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # --- Portfolio Snapshots ---
     def save_portfolio_snapshot(self, total_value: float, cash: float,
                                 positions_value: float, peak_value: float):

@@ -88,6 +88,21 @@
             <h2 class="text-lg font-semibold text-white">{% block page_title %}Dashboard{% endblock %}</h2>
             <div class="flex items-center gap-4 text-sm text-gray-400">
                 <span id="clock"></span>
+                {% if available_versions %}
+                <form action="/switch-version" method="POST" class="flex items-center gap-2">
+                    {% for ver in available_versions %}
+                    <button type="submit" name="version" value="{{ ver }}"
+                            class="px-2.5 py-1 rounded-full text-xs font-medium border transition
+                            {% if active_version == ver %}
+                                bg-blue-500/20 text-blue-400 border-blue-500/40
+                            {% else %}
+                                bg-gray-800/50 text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600
+                            {% endif %}">
+                        {{ ver|upper }}
+                    </button>
+                    {% endfor %}
+                </form>
+                {% endif %}
                 <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                     <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     Read-Only

@@ -12,7 +12,7 @@ Usage:
 import argparse
 import logging
 
-from core.config import load_config
+from core.config import load_config, activate_version
 from core.database import Database
 from core.logging_config import setup_logging, setup_transaction_logger
 from orchestrator.scheduler import TradingScheduler
@@ -30,23 +30,27 @@ def main():
     parser.add_argument("--port", type=int, default=5000, help="Dashboard port (default: 5000)")
     parser.add_argument("--no-macro", action="store_true", help="Disable macro overlay (use base config values)")
     parser.add_argument("--config", default="config.yaml", help="Config file path")
+    parser.add_argument("--version", choices=["v1", "v2"], default=None,
+                        help="Account version (v1=original, v2=anti-churn)")
     args = parser.parse_args()
+
+    # Activate version credentials before any Alpaca client init
+    if args.version:
+        activate_version(args.version, args.config)
 
     # Dashboard mode — launch Flask web UI (no trading dependencies needed)
     if args.dashboard:
         from dashboard.app import create_app
-        import yaml
-        with open(args.config) as f:
-            cfg = yaml.safe_load(f)
-        db_path = cfg.get("database", {}).get("path", "data/trading.db")
-        app = create_app(db_path=db_path)
-        print(f"Starting AiTrading Dashboard at http://127.0.0.1:{args.port}")
+        config = load_config(args.config, version=args.version)
+        app = create_app(db_path=config.db_path)
+        ver_label = f" ({args.version})" if args.version else ""
+        print(f"Starting AiTrading Dashboard{ver_label} at http://127.0.0.1:{args.port}")
         print(f"Database: {app.config['DB_PATH']}")
         app.run(host="127.0.0.1", port=args.port, debug=False)
         return
 
     # Initialize
-    config = load_config(args.config)
+    config = load_config(args.config, version=args.version)
     if args.no_macro:
         config.set("macro.enabled", False)
     logger = setup_logging(config)

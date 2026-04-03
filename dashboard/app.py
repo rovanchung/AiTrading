@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
-from flask import Flask
+from flask import Flask, redirect, request, session, url_for
 
 from dashboard.db import init_db
 from dashboard.routes.main import main_bp
@@ -26,22 +26,34 @@ def create_app(db_path=None):
         static_folder=str(Path(__file__).parent / "static"),
     )
 
-    # Resolve DB path from config.yaml if not provided
-    if db_path is None:
-        config_file = PROJECT_ROOT / "config.yaml"
-        if config_file.exists():
-            with open(config_file) as f:
-                cfg = yaml.safe_load(f)
-            db_path = cfg.get("database", {}).get("path", "data/trading.db")
-        else:
-            db_path = "data/trading.db"
+    # Load config for account DB paths
+    config_file = PROJECT_ROOT / "config.yaml"
+    cfg = {}
+    if config_file.exists():
+        with open(config_file) as f:
+            cfg = yaml.safe_load(f) or {}
 
-    # Make relative paths relative to project root
+    # Resolve default DB path
+    if db_path is None:
+        db_path = cfg.get("database", {}).get("path", "data/trading.db")
     if not os.path.isabs(db_path):
         db_path = str(PROJECT_ROOT / db_path)
 
     app.config["DB_PATH"] = db_path
     app.config["SECRET_KEY"] = "aitrade-dashboard-local"
+
+    # Build version-specific DB paths
+    db_paths = {}
+    accounts = cfg.get("accounts", {})
+    for ver, acct in accounts.items():
+        rel = acct.get("database_path")
+        if rel:
+            p = str(PROJECT_ROOT / rel) if not os.path.isabs(rel) else rel
+            db_paths[ver] = p
+    app.config["DB_PATHS"] = db_paths
+
+    # If only one version's DB exists, expose that list for the template
+    app.config["AVAILABLE_VERSIONS"] = sorted(db_paths.keys())
 
     # Register blueprints
     app.register_blueprint(main_bp)
@@ -51,6 +63,33 @@ def create_app(db_path=None):
     app.register_blueprint(analysis_bp, url_prefix="/analysis")
     app.register_blueprint(portfolio_bp, url_prefix="/portfolio")
     app.register_blueprint(api_bp, url_prefix="/api/data")
+
+    # Version switch route
+    @app.route("/switch-version", methods=["POST"])
+    def switch_version():
+        version = request.form.get("version")
+        if version in db_paths:
+            session["dashboard_version"] = version
+        else:
+            session.pop("dashboard_version", None)
+        return redirect(request.referrer or url_for("main.index"))
+
+    # Inject version info into all templates
+    @app.context_processor
+    def inject_version():
+        active = session.get("dashboard_version")
+        versions = app.config.get("AVAILABLE_VERSIONS", [])
+        # Determine strategy label
+        if active:
+            acct = accounts.get(active, {})
+            strategy = acct.get("strategy_version", active)
+        else:
+            strategy = None
+        return {
+            "active_version": active,
+            "available_versions": versions,
+            "strategy_label": strategy,
+        }
 
     # Template filters
     @app.template_filter("currency")
