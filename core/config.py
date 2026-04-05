@@ -102,9 +102,14 @@ def activate_version(version: str, config_path: str = "config.yaml") -> None:
     project_root = Path(__file__).parent.parent
     load_dotenv(project_root / ".env")
 
-    suffix = f"_{version.upper()}"  # _V1 or _V2
+    suffix = f"_{version.upper()}"  # _V1, _V2, _V3, etc.
     api_key = os.environ.get(f"ALPACA_API_KEY{suffix}", "")
     secret_key = os.environ.get(f"ALPACA_SECRET_KEY{suffix}", "")
+
+    # Fallback: v1 can use the base ALPACA_API_KEY / ALPACA_SECRET_KEY
+    if version == "v1" and (not api_key or api_key == "CHANGE_ME"):
+        api_key = os.environ.get("ALPACA_API_KEY", "")
+        secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
 
     if not api_key or not secret_key or api_key == "CHANGE_ME":
         raise ConfigError(
@@ -146,7 +151,10 @@ def load_config(config_path: str = "config.yaml", version: str = None) -> Config
         acct = accounts.get(version, {})
         if acct.get("database_path"):
             data.setdefault("database", {})["path"] = acct["database_path"]
-        if acct.get("strategy_version"):
-            data.setdefault("trading", {})["strategy_version"] = acct["strategy_version"]
+        # Merge all other account keys into trading section
+        trading = data.setdefault("trading", {})
+        for key, val in acct.items():
+            if key != "database_path":
+                trading[key] = val
 
     return Config(data)

@@ -24,6 +24,7 @@ class PortfolioManager:
 
     @property
     def _is_v2(self) -> bool:
+        """True for any account using v2 strategy (v2, v3, etc.)."""
         return self.tc.get("strategy_version", "v1") == "v2"
 
     def set_macro_adjustments(self, adjustments: Optional[dict]):

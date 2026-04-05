@@ -65,3 +65,9 @@ accounts:
     database_path: "data/trading_v2.db"
     strategy_version: "v2"
     # Uses ALPACA_API_KEY_V2 / ALPACA_SECRET_KEY_V2 from .env
+  v3:
+    database_path: "data/trading_v3.db"
+    strategy_version: "v2"
+    v2_profit_take_pct: 0.05      # override: +5% profit target
+    v2_loss_cut_pct: 0.03         # override: -3% stop loss
+    # Uses ALPACA_API_KEY_V3 / ALPACA_SECRET_KEY_V3 from .env
