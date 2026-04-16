@@ -50,7 +50,7 @@ AiTrading is an automated stock trading system that continuously scans the S&P 5
 ### core/
 Foundation layer shared by all modules.
 
-- **config.py** — Loads `config.yaml` + `.env`. Provides `Config` object with dot-notation access (`config.get("trading.max_positions")`).
+- **config.py** — Loads `config.yaml` + `.env`. Provides `Config` object with dot-notation access (`config.get("trading.max_positions")`). `load_config(version=)` merges per-account overrides (database path, strategy version, trading params) from the `accounts:` section. `activate_version()` swaps Alpaca credentials for the selected account.
 - **models.py** — Dataclasses: `Stock`, `ScoreResult`, `Position`, `Order`, `Signal`.
 - **database.py** — SQLite with WAL mode. Tables: `universe`, `scan_results`, `scores`, `positions`, `orders`, `price_snapshots`, `portfolio_snapshots`, `fundamentals`.
 - **logging_config.py** — Rotating file + console logging.
@@ -88,9 +88,9 @@ Scores each candidate 0–100 across four dimensions, plus a macro-economic over
 ### portfolio/
 Profit-based sells + score-proportional redistribution engine. Buy threshold is dynamically adjusted by the macro overlay.
 
-- **manager.py** — Two-step decision logic:
-  - **Step 1 — Profit-based sells**: Sell if P&L ≥ +1% (`profit_take_pct`) or ≤ -0.5% (`loss_cut_pct`) from Alpaca avg cost. Sold tickers enter a 2-hour cooldown (`cooldown_hours`).
-  - **Step 2 — Score-based redistribution**: Allocates 50% of portfolio value (`purchase_power_pct`) across all qualifying stocks (composite ≥ `buy_threshold`, macro-adjusted). Each stock gets capital proportional to its composite score share. Generates buy/sell signals to reach target quantities. Positions that no longer qualify are sold.
+- **manager.py** — Two-step decision logic (parameters are version-dependent, see accounts config):
+  - **Step 1 — Profit-based sells**: Sell if P&L ≥ profit target or ≤ -loss cut from Alpaca avg cost. V2-strategy accounts respect min hold time. Sold tickers enter a 2-hour cooldown (`cooldown_hours`).
+  - **Step 2 — Score-based redistribution**: Allocates 50% of portfolio value (`purchase_power_pct`) across all qualifying stocks (composite ≥ `buy_threshold`, macro-adjusted). Each stock gets capital proportional to its composite score share. Generates buy/sell signals to reach target quantities. V2-strategy accounts use hysteresis (sell threshold < buy threshold) and a rebalance dead band to reduce churn. Positions that no longer qualify are sold.
   - Accepts macro adjustments via `set_macro_adjustments()` which modify the buy threshold each cycle.
 
 ### executor/
@@ -243,13 +243,20 @@ Composite = 0.35×Technical + 0.25×Fundamental + 0.25×Momentum + 0.15×Sentime
 
 ## Risk Management Rules
 
-| Rule | Value | Purpose |
-|------|-------|---------|
-| Profit take | +1% from avg cost | Sell and reallocate |
-| Loss cut | -0.5% from avg cost | Sell to limit losses |
-| Cooldown | 2 hours | Prevent re-buying a just-sold ticker |
-| Purchase power | 50% of portfolio | Capital allocated for redistribution |
-| Buy threshold | 60 (macro-adjusted) | Minimum composite score to qualify |
+Profit/loss thresholds and hold rules vary by account version. Per-account overrides are configured in the `accounts:` section of `config.yaml`.
+
+| Rule | V1 | V2 | V3 | V4 | Purpose |
+|------|----|----|----|----|---------|
+| Profit take | +1% | +3% | +5% | +5% | Sell and reallocate |
+| Loss cut | -0.5% | -2% | -3% | -3% | Sell to limit losses |
+| Min hold time | None | 30 min | 30 min | None | Prevent premature sells |
+| Sell threshold | 60 (= buy) | 55 | 55 | 55 | Score hysteresis for qualification sells |
+| Rebalance dead band | None | 3% | 3% | 3% | Skip small rebalance trades |
+| Cooldown | 2 hours | 2 hours | 2 hours | 2 hours | Prevent re-buying a just-sold ticker |
+| Purchase power | 50% | 50% | 50% | 50% | Capital allocated for redistribution |
+| Buy threshold | 60 (macro-adjusted) | 60 (macro-adjusted) | 60 (macro-adjusted) | 60 (macro-adjusted) | Minimum composite score to qualify |
+
+Each account runs with a separate Alpaca account (`ALPACA_API_KEY_V{1-4}`) and database (`data/trading_v{1-4}.db`). V2/V3/V4 use the v2 strategy engine (hysteresis + dead band); V1 uses the original logic.
 
 Note: Previous risk rules (max positions, sector limits, cash reserve, stop-loss, trailing stop, take-profit, drawdown) are deprecated and commented out in `config.yaml`. Position sizing is now handled entirely by the score-proportional redistribution engine.
 

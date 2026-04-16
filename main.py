@@ -30,8 +30,8 @@ def main():
     parser.add_argument("--port", type=int, default=5000, help="Dashboard port (default: 5000)")
     parser.add_argument("--no-macro", action="store_true", help="Disable macro overlay (use base config values)")
     parser.add_argument("--config", default="config.yaml", help="Config file path")
-    parser.add_argument("--version", choices=["v1", "v2", "v3"], default=None,
-                        help="Account version (v1=original, v2=anti-churn, v3=custom)")
+    parser.add_argument("--version", choices=["v1", "v2", "v3", "v4"], default=None,
+                        help="Account version (v1=original, v2=anti-churn, v3=custom, v4=no-hold)")
     args = parser.parse_args()
 
     # Activate version credentials before any Alpaca client init

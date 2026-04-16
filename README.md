@@ -25,6 +25,26 @@ You'll enter these keys during setup below. See [WORKFLOW.md](WORKFLOW.md) for d
 
 For detailed information on operation modes, configuration, and safety features, run `./aitrade info`.
 
+## Strategy Versions
+
+The system supports multiple trading accounts, each with its own Alpaca credentials, database, and strategy parameters. Run them simultaneously:
+
+```bash
+./aitrade run --version v1 &
+./aitrade run --version v2 &
+./aitrade run --version v3 &
+./aitrade run --version v4 &
+```
+
+| Version | Strategy | Profit | Loss | Hold time | Hysteresis |
+|---------|----------|--------|------|-----------|------------|
+| **V1** — Original | v1 | 1% | 0.5% | None | No (sell threshold = buy threshold) |
+| **V2** — Anti-churn | v2 | 3% | 2% | 30 min | Yes (sell < 55, 3% dead band) |
+| **V3** — Custom | v2 | 5% | 3% | 30 min | Yes (sell < 55, 3% dead band) |
+| **V4** — No hold | v2 | 5% | 3% | None | Yes (sell < 55, 3% dead band) |
+
+Each account uses separate env vars (`ALPACA_API_KEY_V1`, `_V2`, `_V3`, `_V4`) and a separate database (`data/trading_v{1-4}.db`). Per-account parameters are configured in the `accounts:` section of `config.yaml` — any trading parameter can be overridden per account.
+
 ## Web Dashboard
 
 Launch the interactive web dashboard to monitor positions, rankings, orders, and portfolio performance:
@@ -50,9 +70,9 @@ In continuous mode (`./aitrade run`), the system runs these jobs automatically:
 |-----|----------|------------|--------------|
 | A. Pre-market prep | 9:25 AM ET, Mon–Fri | `schedule.prep_minutes_before_open` | Universe refresh, macro assessment, screen ~500, analyze, cache shortlist |
 | B. Full trading cycle | Hourly at :00, 10 AM–3 PM ET | `schedule.market_open`, `schedule.market_close` | Full universe screen → analyze → profit check + redistribution → execute orders (retries up to 12 min) |
-| C. Rebalance cycle | Every 1 min, 9:30 AM–3:59 PM ET | `schedule.rerank_interval_minutes` | Re-score shortlist (~80 tickers) → profit-based sells (≥+1% or ≤-0.5%) → score-proportional redistribution → execute orders |
+| C. Rebalance cycle | Every 1 min, 9:30 AM–3:59 PM ET | `schedule.rerank_interval_minutes` | Re-score shortlist (~80 tickers) → profit-based sells → score-proportional redistribution → execute orders |
 
-Full cycles refresh the entire universe hourly. Rebalance cycles use a cached shortlist for faster turnaround. Both use the same two-step logic: (1) sell positions hitting profit/loss thresholds with 2-hour cooldown, (2) redistribute 50% of portfolio value proportionally by score among qualifying stocks. The trading portion is atomic across all jobs via a shared lock.
+Full cycles refresh the entire universe hourly. Rebalance cycles use a cached shortlist for faster turnaround. Both use the same two-step logic: (1) sell positions hitting profit/loss thresholds (version-dependent) with 2-hour cooldown, (2) redistribute 50% of portfolio value proportionally by score among qualifying stocks. The trading portion is atomic across all jobs via a shared lock.
 
 See [WORKFLOW.md](WORKFLOW.md) for the detailed step-by-step flow, API providers called per step, rate limits, and daily API call estimates.
 
@@ -68,9 +88,9 @@ The macro overlay automatically adjusts trading parameters based on economic con
 
 | Path | Purpose |
 |------|---------|
-| `config.yaml` | All configurable parameters |
-| `.env` | API keys (gitignored) |
-| `data/trading.db` | SQLite database (positions, scores, fundamentals, orders) |
+| `config.yaml` | All configurable parameters (including per-account overrides) |
+| `.env` | API keys per account: `ALPACA_API_KEY_V{1-4}`, Finnhub, FMP (gitignored) |
+| `data/trading_v{1-4}.db` | Per-account SQLite databases (positions, scores, fundamentals, orders) |
 | `data/logs/main.log` | Application logs (rotating, 50MB max) |
 | `data/logs/transactions.log` | Transaction log (buy/sell/exit events) |
 | `data/logs/alerts.json` | Trading alerts (opens, closes, stops, errors) |

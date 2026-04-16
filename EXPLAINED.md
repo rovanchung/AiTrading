@@ -195,31 +195,35 @@ Notice a pattern: **energy stocks dominate** (EOG, CTRA, COP, OKE, DVN, APA, HAL
 
 ## The Decision Logic (What Happens in Live Mode)
 
-### Buying
+The system runs four strategy versions (V1–V4) on separate Alpaca accounts simultaneously. All use the same two-step logic with different parameters:
+
+### Step 1: Profit-Based Sells (checked every 1 min)
 ```
-IF composite_score >= 65
-   AND technical_score >= 50
-   AND open_slots_available (< 10 positions)
-   AND sector_limit_ok (< 30% in one sector)
-   AND cash_reserve_ok (keep 20% cash)
-THEN → BUY
+IF P&L ≥ +profit_target from avg cost     → SELL (profit take)
+IF P&L ≤ -loss_cut from avg cost          → SELL (loss cut)
+IF held < min_hold_time                   → SKIP (v2-strategy only)
 ```
 
-### Selling (checked every 30 seconds + every 15 minutes)
+| Version | Profit target | Loss cut | Min hold |
+|---------|--------------|----------|----------|
+| V1 | +1% | -0.5% | None |
+| V2 | +3% | -2% | 30 min |
+| V3 | +5% | -3% | 30 min |
+| V4 | +5% | -3% | None |
+
+Sold tickers enter a **2-hour cooldown** — the system won't re-buy them immediately.
+
+### Step 2: Score-Based Redistribution
 ```
-IF price drops 5% from purchase price     → SELL (stop-loss)
-IF price drops 3% from its highest point   → SELL (trailing stop)
-IF price rises 15% from purchase price     → SELL (take-profit)
-IF composite_score drops below 40          → SELL (score decay)
-IF held > 10 days with < 1% gain           → SELL (stagnation)
-IF a new stock scores 20+ points higher    → SELL weakest, BUY replacement
+IF composite_score >= 60 (buy_threshold, macro-adjusted)
+THEN → allocate capital proportionally by score
 ```
 
-### Portfolio Protection
-```
-IF portfolio drops 10% from peak → reduce all positions by 50%
-IF portfolio drops 15% from peak → sell EVERYTHING, pause 24 hours
-```
+50% of portfolio value is distributed across qualifying stocks. Each stock's share is proportional to its composite score. The system buys/sells shares to reach the target allocation.
+
+**V2-strategy extras** (V2, V3, V4):
+- **Hysteresis**: A position is only sold for "no longer qualifies" if its score drops below **55** (not 60). This 5-point buffer prevents churn when scores oscillate near the threshold.
+- **Dead band**: Rebalance trades are skipped if the allocation difference is ≤ 3% of portfolio value — don't trade for tiny adjustments.
 
 ---
 
@@ -227,15 +231,15 @@ IF portfolio drops 15% from peak → sell EVERYTHING, pause 24 hours
 
 The system combines **trend following** (ride winners) with **risk management** (cut losers fast):
 
-1. **Asymmetric risk/reward**: Stop-loss at -5%, take-profit at +15%. You need to be right only 1 out of every 3 trades to break even. If you're right 40% of the time: expected value = 0.4 × 15% - 0.6 × 5% = +3% per trade.
+1. **Profit-based sells with tight thresholds**: Even small gains compound. V1 takes profit at +1% — if you trade 10 times a day and win 60% at +1% vs lose 40% at -0.5%, expected value = 0.6 × 1% - 0.4 × 0.5% = +0.4% per trade. V3/V4 use wider bands (+5%/-3%) for fewer but larger wins.
 
-2. **Trailing stops** let winners run. If a stock goes up 12% then drops 3% from there, you lock in ~9% profit instead of waiting for the 15% take-profit.
+2. **Score-proportional allocation**: Capital flows to the highest-scoring stocks automatically. If AAPL scores 80 and MSFT scores 60, AAPL gets 57% of the allocation. No fixed position sizing — the math handles it.
 
 3. **Multi-dimensional scoring** avoids single-point-of-failure analysis. A stock with great technicals but terrible fundamentals (like VRSN: T=95, F=30) gets a moderate composite score (70.3) rather than being a top pick.
 
-4. **Continuous re-evaluation** every 15 minutes means the system adapts. If a stock's score drops from 70 to 35, it sells — you don't hold onto losers hoping they recover.
+4. **Continuous re-evaluation** every 1 minute means the system adapts. If a stock's score drops below the sell threshold, it's sold — you don't hold onto losers hoping they recover.
 
-5. **Drawdown protection** prevents catastrophic losses. The -15% liquidation circuit breaker means even in a market crash, your maximum loss is bounded.
+5. **Multiple strategy versions** run simultaneously on separate accounts, letting you compare approaches (tight vs wide bands, with vs without hold time) with real results.
 
 ---
 
@@ -267,9 +271,8 @@ Before the system picks stocks, it reads the "weather" of the overall economy:
 
 The macro score (44.9) classifies the regime as **neutral** — not great, not terrible. This adjusts the system:
 
-- **Max positions**: 10 → 8 (hold fewer stocks when uncertain)
-- **Buy threshold**: stays at 65 (only slightly cautious)
-- **Cash reserve**: stays at 20%
+- **Buy threshold**: 60 → 65 (+5 in neutral regime)
+- In risk-off (score < 40): buy threshold jumps to 75, only top stocks qualify
 
 The cycle classification (**late_cycle**) adjusts which sectors get more room:
 - **Energy, Materials, Industrials, Healthcare** → favored (allowed 40% of portfolio)

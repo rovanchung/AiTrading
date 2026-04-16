@@ -298,6 +298,10 @@ def cmd_configure_env(_args):
             ("ALPACA_API_KEY_V3", "Alpaca API Key", ""),
             ("ALPACA_SECRET_KEY_V3", "Alpaca Secret Key", ""),
         ]),
+        ("V4 (No hold)", [
+            ("ALPACA_API_KEY_V4", "Alpaca API Key", ""),
+            ("ALPACA_SECRET_KEY_V4", "Alpaca Secret Key", ""),
+        ]),
         ("Shared", [
             ("ALPACA_BASE_URL", "Alpaca Base URL", "https://paper-api.alpaca.markets"),
             ("FINNHUB_API_KEY", "Finnhub API Key (free at finnhub.io)", ""),
@@ -538,6 +542,7 @@ def menu_version():
         {"label": "V1 — Original",    "desc": "1% profit / 0.5% loss / no hold time", "value": "v1"},
         {"label": "V2 — Anti-churn",  "desc": "3% profit / 2% loss / 30m hold / hysteresis", "value": "v2"},
         {"label": "V3 — Custom",      "desc": "5% profit / 3% loss / v2 strategy", "value": "v3"},
+        {"label": "V4 — No hold",     "desc": "5% profit / 3% loss / no hold time", "value": "v4"},
     ], back_label="Back")
 
     if choice is None:

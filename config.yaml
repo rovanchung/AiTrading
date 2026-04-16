@@ -71,3 +71,10 @@ accounts:
     v2_profit_take_pct: 0.05      # override: +5% profit target
     v2_loss_cut_pct: 0.03         # override: -3% stop loss
     # Uses ALPACA_API_KEY_V3 / ALPACA_SECRET_KEY_V3 from .env
+  v4:
+    database_path: "data/trading_v4.db"
+    strategy_version: "v2"
+    v2_profit_take_pct: 0.05      # same as v3: +5% profit target
+    v2_loss_cut_pct: 0.03         # same as v3: -3% stop loss
+    v2_min_hold_minutes: 0        # no hold time (like v1)
+    # Uses ALPACA_API_KEY_V4 / ALPACA_SECRET_KEY_V4 from .env

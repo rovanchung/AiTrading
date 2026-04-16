@@ -11,15 +11,15 @@ Automated stock trading system.
 ## Key Files
 
 - `config.yaml` — all tunable parameters (thresholds, weights, schedule, filters)
-- `.env` — API keys: Alpaca, FMP, Finnhub (gitignored, never commit)
-- `data/trading.db` — SQLite database (runtime, gitignored)
+- `.env` — API keys: Alpaca (v1–v4), FMP, Finnhub (gitignored, never commit)
+- `data/trading_v{1,2,3,4}.db` — per-account SQLite databases (runtime, gitignored)
 - `aitrade` — CLI entry point (Python): interactive menu or `./aitrade <command>` (run, once, dry-run, scan, dashboard, db, logs, setup-db, install, info)
-- `main.py` — trading engine: `--dry-run`, `--once`, `--no-macro`, `--dashboard`, or continuous scheduler
+- `main.py` — trading engine: `--dry-run`, `--once`, `--no-macro`, `--dashboard`, `--version v1|v2|v3|v4`, or continuous scheduler
 - `scripts/manual_scan.py` — manual analysis tool for debugging
 
 ## Module Layout
 
-- `core/` — config, models, database, logging, exceptions, data providers (shared foundation)
+- `core/` — config, models, database, logging, exceptions, data providers (shared foundation); `load_config(version=)` merges per-account overrides into trading params
   - `alpaca_data.py` — Alpaca market data (OHLCV bars, news); primary source for price/news
   - `finnhub_data.py` — Finnhub fundamentals (EPS, BVPS, ROE, margins, growth, etc.); primary source for fundamental data
   - `fmp_data.py` — Financial Modeling Prep (fundamentals fallback: ROE, margins, etc.)

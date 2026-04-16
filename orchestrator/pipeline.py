@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from core.config import Config
 from core.database import Database
+from core import scan_cache
 from core.models import Position
 from screener.screener import StockScreener
 from screener.universe import refresh_universe
@@ -51,6 +52,80 @@ class TradingPipeline:
         # Lock for atomic trade execution (get positions + execute)
         self._trade_lock = threading.Lock()
 
+    def _scan_or_load_cache(self, scan_max_age: float = 90):
+        """Scan with lock, or load from cache if another process scanned recently.
+
+        Returns (scored, data) or (None, None).
+        """
+        # If cache is fresh, skip scanning entirely
+        if scan_cache.is_fresh(scan_max_age):
+            logger.info("Fresh scan cache found, loading...")
+            scored, data = scan_cache.load()
+            if scored:
+                shortlist = scan_cache.load_shortlist()
+                if shortlist:
+                    self._shortlist = shortlist
+                return scored, data
+
+        # Try to acquire the scan lock
+        lock_fd = scan_cache.acquire_scan_lock(timeout=5.0)
+
+        if lock_fd is None:
+            # Another process is scanning — wait for it to finish
+            logger.info("Another process is scanning, waiting for cache...")
+            return self._wait_for_cache(scan_max_age, timeout=300)
+
+        # We hold the lock — re-check cache (another process may have
+        # finished between our freshness check and acquiring the lock)
+        if scan_cache.is_fresh(scan_max_age):
+            scan_cache.release_scan_lock(lock_fd)
+            scored, data = scan_cache.load()
+            if scored:
+                shortlist = scan_cache.load_shortlist()
+                if shortlist:
+                    self._shortlist = shortlist
+                return scored, data
+
+        # Actually scan
+        try:
+            logger.info("--- Screening ---")
+            candidates = self.screener.scan()
+            if not candidates:
+                logger.warning("No candidates found in scan")
+                return None, None
+
+            logger.info("--- Fetching data ---")
+            data = self.screener.get_data_for_tickers(candidates)
+            spy_df = self.screener._fetch_single("SPY")
+
+            logger.info("--- Analyzing ---")
+            scored = self.analyzer.analyze_batch(candidates, data, spy_df)
+            if not scored:
+                logger.warning("No stocks scored successfully")
+                return None, None
+
+            self._update_shortlist(scored)
+            scan_cache.save(scored, data, self._shortlist)
+            return scored, data
+
+        finally:
+            scan_cache.release_scan_lock(lock_fd)
+
+    def _wait_for_cache(self, max_age: float, timeout: float = 300):
+        """Poll until the cache is fresh or timeout."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if scan_cache.is_fresh(max_age):
+                scored, data = scan_cache.load()
+                if scored:
+                    shortlist = scan_cache.load_shortlist()
+                    if shortlist:
+                        self._shortlist = shortlist
+                    return scored, data
+            time.sleep(2)
+        logger.warning("Timed out waiting for scan cache")
+        return None, None
+
     def pre_market_prep(self):
         """Run at 9:25 AM: refresh universe, macro assessment, screen, and score."""
         t0 = time.time()
@@ -71,27 +146,12 @@ class TradingPipeline:
         else:
             logger.info("--- Macro overlay disabled ---")
 
-        # Screen for candidates
-        logger.info("--- Screening ---")
-        candidates = self.screener.scan()
-        if not candidates:
-            logger.warning("No candidates found in scan")
+        # Scan (or load from cache if another version just scanned)
+        scored, data = self._scan_or_load_cache(scan_max_age=90)
+        if scored is None:
             logger.info(f"Pre-market prep complete, no candidates ({time.time() - t0:.1f}s)")
             return
 
-        # Fetch data and score
-        logger.info("--- Fetching data ---")
-        data = self.screener.get_data_for_tickers(candidates)
-        spy_df = self.screener._fetch_single("SPY")
-
-        logger.info("--- Analyzing ---")
-        scored = self.analyzer.analyze_batch(candidates, data, spy_df)
-        if not scored:
-            logger.warning("No stocks scored successfully")
-            logger.info(f"Pre-market prep complete, no scores ({time.time() - t0:.1f}s)")
-            return
-
-        self._update_shortlist(scored)
         logger.info(
             f"=== PRE-MARKET PREP COMPLETE — {len(scored)} stocks scored, "
             f"shortlist={len(self._shortlist)} ({time.time() - t0:.1f}s) ==="
@@ -118,36 +178,19 @@ class TradingPipeline:
                     logger.info("Market is closed, skipping full cycle")
                     return
 
-                # Step 1: Screen for candidates
-                logger.info("--- Step 1: Screening ---")
-                candidates = self.screener.scan()
-                if not candidates:
-                    logger.warning("No candidates found in scan")
-                    return
-
-                # Step 2: Fetch detailed data for candidates
-                logger.info("--- Step 2: Fetching data ---")
-                data = self.screener.get_data_for_tickers(candidates)
-                spy_df = self.screener._fetch_single("SPY")
-
-                # Step 3: Analyze and score candidates
-                logger.info("--- Step 3: Analyzing ---")
-                scored = self.analyzer.analyze_batch(candidates, data, spy_df)
-                if not scored:
-                    logger.warning("No stocks scored successfully")
-                    return
-
-                # Step 4: Macro assessment (if cache expired)
+                # Macro assessment (if cache expired)
                 if self.macro and not self.macro._is_cache_valid():
-                    logger.info("--- Step 3b: Macro assessment ---")
+                    logger.info("--- Macro assessment ---")
                     macro = self.macro.get_macro_assessment()
                     self.portfolio_mgr.set_macro_adjustments(macro.get("adjustments"))
 
-                # Cache shortlist for intra-hour re-ranking
-                self._update_shortlist(scored)
+                # Scan (or load from cache if another version just scanned)
+                scored, data = self._scan_or_load_cache(scan_max_age=90)
+                if scored is None:
+                    return
 
-                # Step 5: Atomic evaluate + execute
-                logger.info("--- Step 4: Evaluating & executing ---")
+                # Atomic evaluate + execute
+                logger.info("--- Evaluating & executing ---")
                 self._atomic_evaluate_and_execute(scored, data)
 
                 logger.info(f"=== FULL TRADING CYCLE COMPLETE ({time.time() - t0:.1f}s) ===")
@@ -192,6 +235,13 @@ class TradingPipeline:
             return
         self._rerank_closed_logged = False
 
+        # If we don't have a shortlist, try loading from cache
+        if not self._shortlist:
+            cached = scan_cache.load_shortlist()
+            if cached:
+                self._shortlist = cached
+                logger.info(f"Loaded shortlist from cache: {len(self._shortlist)} tickers")
+
         if not self._shortlist:
             logger.warning("No shortlist cached, running full cycle instead")
             self.run_full_cycle()
@@ -201,18 +251,40 @@ class TradingPipeline:
         logger.info(f"=== RE-RANK CYCLE START ({len(self._shortlist)} tickers) ===")
 
         try:
-            # Re-fetch data and re-score only the shortlist
-            data = self.screener.get_data_for_tickers(self._shortlist)
-            spy_df = self.screener._fetch_single("SPY")
-            scored = self.analyzer.analyze_batch(self._shortlist, data, spy_df)
+            # Re-rank uses a shorter cache TTL (30s) since it runs every minute
+            lock_fd = scan_cache.acquire_scan_lock(timeout=5.0)
 
-            if not scored:
-                logger.warning("No stocks scored in re-rank")
+            if lock_fd is None:
+                # Another process is re-ranking — use cache if available
+                if scan_cache.is_fresh(30):
+                    scored, data = scan_cache.load()
+                    if scored:
+                        self._atomic_evaluate_and_execute(scored, data)
+                        logger.info(f"=== RE-RANK CYCLE COMPLETE (from cache, {time.time() - t0:.1f}s) ===")
+                        return
+                logger.info("Waiting for scan lock...")
+                scored, data = self._wait_for_cache(max_age=30, timeout=60)
+                if scored:
+                    self._atomic_evaluate_and_execute(scored, data)
+                    logger.info(f"=== RE-RANK CYCLE COMPLETE (waited, {time.time() - t0:.1f}s) ===")
                 return
 
-            self._atomic_evaluate_and_execute(scored, data)
+            try:
+                # Re-fetch data and re-score only the shortlist
+                data = self.screener.get_data_for_tickers(self._shortlist)
+                spy_df = self.screener._fetch_single("SPY")
+                scored = self.analyzer.analyze_batch(self._shortlist, data, spy_df)
 
-            logger.info(f"=== RE-RANK CYCLE COMPLETE ({time.time() - t0:.1f}s) ===")
+                if not scored:
+                    logger.warning("No stocks scored in re-rank")
+                    return
+
+                scan_cache.save(scored, data, self._shortlist)
+                self._atomic_evaluate_and_execute(scored, data)
+                logger.info(f"=== RE-RANK CYCLE COMPLETE ({time.time() - t0:.1f}s) ===")
+
+            finally:
+                scan_cache.release_scan_lock(lock_fd)
 
         except Exception as e:
             logger.error(f"Re-rank cycle failed: {e}")
