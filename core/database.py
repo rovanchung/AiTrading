@@ -87,6 +87,22 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     peak_value REAL
 );
 
+CREATE TABLE IF NOT EXISTS trade_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT,
+    qty INTEGER,
+    entry_price REAL,
+    entry_time TIMESTAMP,
+    exit_price REAL,
+    exit_time TIMESTAMP,
+    pnl REAL,
+    pnl_pct REAL,
+    hold_duration_minutes REAL,
+    exit_reason TEXT,
+    sector TEXT,
+    position_id INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS fundamentals (
     ticker TEXT PRIMARY KEY,
     eps_ttm REAL,
@@ -229,13 +245,28 @@ class Database:
 
     def close_position(self, pos_id: int, exit_price: float, reason: str):
         entry_row = self.conn.execute(
-            "SELECT entry_price, qty FROM positions WHERE id = ?", (pos_id,)
+            "SELECT * FROM positions WHERE id = ?", (pos_id,)
         ).fetchone()
         pnl = (exit_price - entry_row["entry_price"]) * entry_row["qty"]
+        now = datetime.now()
         self.conn.execute(
             """UPDATE positions SET exit_price=?, exit_time=?, status='closed',
                exit_reason=?, pnl=? WHERE id=?""",
-            (exit_price, datetime.now(), reason, pnl, pos_id),
+            (exit_price, now, reason, pnl, pos_id),
+        )
+        # Record in trade_history
+        entry_time = datetime.fromisoformat(entry_row["entry_time"]) if entry_row["entry_time"] else now
+        hold_minutes = (now - entry_time).total_seconds() / 60
+        pnl_pct = ((exit_price - entry_row["entry_price"]) / entry_row["entry_price"] * 100) if entry_row["entry_price"] > 0 else 0
+        self.conn.execute(
+            """INSERT INTO trade_history
+               (ticker, qty, entry_price, entry_time, exit_price, exit_time,
+                pnl, pnl_pct, hold_duration_minutes, exit_reason, sector, position_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (entry_row["ticker"], entry_row["qty"], entry_row["entry_price"],
+             entry_row["entry_time"], exit_price, now,
+             pnl, round(pnl_pct, 2), round(hold_minutes, 1),
+             reason, entry_row["sector"], pos_id),
         )
         self.conn.commit()
 
