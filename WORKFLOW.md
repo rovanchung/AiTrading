@@ -164,7 +164,13 @@ This is the core trading decision block. The trade lock prevents concurrent acce
    - For each qualifying stock: compute target qty → sell excess or buy deficit
    - Sell positions that no longer qualify (no cooldown for redistribution sells)
 
-7. **Execute signals** (`orchestrator/pipeline.py → _execute_signals`):
+7. **Cash guard** (`orchestrator/pipeline.py → _apply_cash_guard`, when `cash_only: true`):
+   - Budget = `account.cash` + estimated sell proceeds − value reserved by pending buys (each adjusted by `cash_slippage_buffer`)
+   - If aggregate buy cost > budget: scale each buy's qty proportionally; buys scaled to zero are dropped
+   - Sells execute first so fills free cash before any buy submits
+   - See [ALPACA_COMPLIANCE.md](ALPACA_COMPLIANCE.md) for the broker rules this enforces
+
+8. **Execute signals** (`orchestrator/pipeline.py → _execute_signals`):
    - For each signal, get current price from OHLCV data
    - Submit order via `OrderManager` → **API: Alpaca** (order submission)
    - On buy fill: create `Position` record in DB, log transaction

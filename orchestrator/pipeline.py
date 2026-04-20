@@ -3,13 +3,14 @@
 import logging
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from core.config import Config
 from core.database import Database
 from core import scan_cache
-from core.models import Position
+from core.models import Position, Signal
 from screener.screener import StockScreener
 from screener.universe import refresh_universe
 from analyzer.analyzer import StockAnalyzer
@@ -509,9 +510,97 @@ class TradingPipeline:
                 logger.info("No signals after filtering pending orders")
                 return
 
+            # Cash guard: cap aggregate buy cost at available cash to avoid margin.
+            # Sells always execute; only buys get scaled or dropped.
+            if self.config.trading.get("cash_only", True):
+                sells = [s for s in filtered if s.action == "sell"]
+                buys = [s for s in filtered if s.action == "buy"]
+                buys = self._apply_cash_guard(
+                    sells, buys, data, pending_orders, account["cash"]
+                )
+                # Sells first so fills free cash before any buy submits
+                filtered = sells + buys
+                if not filtered:
+                    logger.info("No signals after cash guard")
+                    return
+
             # Execute signals
             logger.info(f"Executing {len(filtered)} signals (lock held)")
             self._execute_signals(filtered, data, positions, pending_orders)
+
+    def _apply_cash_guard(
+        self,
+        sell_signals: list[Signal],
+        buy_signals: list[Signal],
+        data: dict,
+        pending_orders: dict[str, list[dict]],
+        cash_available: float,
+    ) -> list[Signal]:
+        """Scale down buy quantities so aggregate buy cost ≤ available cash.
+
+        Budget = cash + expected sell proceeds − value reserved by pending buys.
+        If aggregate proposed buy cost exceeds budget, scale each buy's qty
+        proportionally. Buys scaled to zero are dropped.
+        """
+        slippage = self.config.trading.get("cash_slippage_buffer", 0.005)
+
+        def _price(ticker: str) -> float:
+            df = data.get(ticker)
+            if df is None or df.empty:
+                return 0.0
+            return float(df["Close"].iloc[-1])
+
+        sell_proceeds = 0.0
+        for s in sell_signals:
+            p = _price(s.ticker)
+            if p > 0:
+                sell_proceeds += s.suggested_qty * p * (1 - slippage)
+
+        pending_buy_value = 0.0
+        for ticker, orders in pending_orders.items():
+            p = _price(ticker)
+            if p <= 0:
+                continue
+            for o in orders:
+                if "buy" in o["side"].lower():
+                    pending_buy_value += o["qty"] * p * (1 + slippage)
+
+        budget = max(0.0, cash_available + sell_proceeds - pending_buy_value)
+
+        buy_costs = []
+        total_cost = 0.0
+        for s in buy_signals:
+            p = _price(s.ticker)
+            if p <= 0:
+                continue
+            cost = s.suggested_qty * p * (1 + slippage)
+            buy_costs.append((s, cost))
+            total_cost += cost
+
+        if total_cost <= budget:
+            return [s for s, _ in buy_costs]
+
+        if budget <= 0:
+            logger.warning(
+                f"Cash guard: budget=${budget:,.2f} "
+                f"(cash=${cash_available:,.0f} + sells=${sell_proceeds:,.0f} "
+                f"− pending_buys=${pending_buy_value:,.0f}); "
+                f"dropping {len(buy_costs)} buy(s) totaling ${total_cost:,.0f}"
+            )
+            return []
+
+        scale = budget / total_cost
+        logger.info(
+            f"Cash guard: scaling {len(buy_costs)} buy(s) by {scale:.1%} "
+            f"(budget=${budget:,.0f} < proposed=${total_cost:,.0f})"
+        )
+
+        scaled = []
+        for signal, _cost in buy_costs:
+            new_qty = int(signal.suggested_qty * scale)
+            if new_qty > 0:
+                scaled.append(replace(signal, suggested_qty=new_qty))
+        return scaled
 
     def _execute_signals(
         self, signals, data: dict, positions: list[Position],

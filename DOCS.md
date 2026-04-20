@@ -18,6 +18,10 @@
 **Detailed execution workflow.** Complete flow from launch through every scheduled job. Covers initialization, pre-market prep, full trading cycles, re-rank cycles, position monitoring, shutdown, single-run modes (`--once`, `--dry-run`, `--dashboard`), timing summary for a full trading day. Includes API providers per step, rate limits and throttling, caching layers, and daily API call estimates by provider.
 - Update when: schedule/job timing/rate limits change (timing summary, rate limits, daily estimates), data source or provider changes (API providers/calls)
 
+### [ALPACA_COMPLIANCE.md](ALPACA_COMPLIANCE.md)
+**Broker rules reference.** Account types and `multiplier` field, margin interest mechanics, PDT rule, cash-account settlement violations (GFV/free-ride), how the cash guard (`_apply_cash_guard`) enforces no-borrow, and Alpaca account-field reference.
+- Update when: cash-guard logic changes, new compliance guards added (e.g., PDT), Alpaca account fields we read change
+
 ### [CLAUDE.md](CLAUDE.md)
 **AI assistant context.** Python environment, key files, module layout. Read by Claude Code at the start of every session.
 - Update when: new module or file added (module layout)

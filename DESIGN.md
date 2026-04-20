@@ -92,6 +92,7 @@ Profit-based sells + score-proportional redistribution engine. Buy threshold is 
   - **Step 1 — Profit-based sells**: Sell if P&L ≥ profit target or ≤ -loss cut from Alpaca avg cost. V2-strategy accounts respect min hold time. Sold tickers enter a 2-hour cooldown (`cooldown_hours`).
   - **Step 2 — Score-based redistribution**: Allocates 50% of portfolio value (`purchase_power_pct`) across all qualifying stocks (composite ≥ `buy_threshold`, macro-adjusted). Each stock gets capital proportional to its composite score share. Generates buy/sell signals to reach target quantities. V2-strategy accounts use hysteresis (sell threshold < buy threshold) and a rebalance dead band to reduce churn. Positions that no longer qualify are sold.
   - Accepts macro adjustments via `set_macro_adjustments()` which modify the buy threshold each cycle.
+  - **Cash guard** (`orchestrator/pipeline.py → _apply_cash_guard`, enabled when `cash_only: true`): after signals are generated, aggregate buy cost is capped at `account.cash` + expected sell proceeds − pending buy reservations (each adjusted by `cash_slippage_buffer`). Excess buys are scaled down proportionally or dropped, preventing margin borrowing in normal operation while leaving the margin account as a safety net for fill-price slippage. See [ALPACA_COMPLIANCE.md](ALPACA_COMPLIANCE.md) for the underlying broker rules (margin interest, PDT, GFV) this design targets.
 
 ### executor/
 Alpaca broker integration.

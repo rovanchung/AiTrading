@@ -6,6 +6,8 @@ trading:
   purchase_power_pct: 0.50      # 50% of portfolio value for redistribution
   cooldown_hours: 24             # hours before re-buying a profit/loss sold ticker
   paper_trading: true
+  cash_only: true                # cap buys at available cash; avoid margin borrowing
+  cash_slippage_buffer: 0.005    # reserve 0.5% of cash for fill-price slippage
   # v2 strategy parameters (ignored when strategy_version = v1):
   v2_profit_take_pct: 0.03      # +3% from Alpaca avg cost -> sell
   v2_loss_cut_pct: 0.02         # -2% from Alpaca avg cost -> sell
