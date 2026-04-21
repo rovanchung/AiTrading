@@ -560,6 +560,45 @@ class TradingPipeline:
                 except Exception as e:
                     logger.warning(f"Failed to cancel order {order['order_id']}: {e}")
 
+    def _cancel_stale_pending_orders(
+        self, pending_orders: dict[str, list[dict]]
+    ) -> int:
+        """Cancel every leftover pending order so the next cycle can redistribute.
+
+        Limit buys from a prior cycle sit with stale prices and block the current
+        redistribution (the signal filter in `_atomic_evaluate_and_execute` skips
+        tickers with same-side pending orders). Cancelling them up-front lets the
+        current cycle re-score and re-submit at current prices. Returns the count
+        of orders whose cancel call was accepted by Alpaca.
+        """
+        if not pending_orders:
+            return 0
+
+        cancelled = 0
+        for ticker, orders in pending_orders.items():
+            for o in orders:
+                try:
+                    self.broker.cancel_order(o["order_id"])
+                    logger.info(
+                        f"Cancelled stale {o['side']} order for {ticker} "
+                        f"(qty={o['qty']}) to free it for redistribution"
+                    )
+                    cancelled += 1
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to cancel stale order {o['order_id']} for {ticker}: {e}"
+                    )
+
+        if cancelled:
+            logger.info(
+                f"Cancelled {cancelled} stale pending order(s); "
+                f"reconciling DB before redistribution"
+            )
+            self._reconcile_pending_buys()
+            self._reconcile_pending_sells()
+
+        return cancelled
+
     def _atomic_evaluate_and_execute(self, scored, data: dict):
         """Atomically get positions, evaluate signals, and execute trades.
 
@@ -567,11 +606,16 @@ class TradingPipeline:
         from the position monitor or rescore jobs.
         """
         with self._trade_lock:
-            # Sync pending orders from Alpaca before making decisions
+            # Sync pending orders from Alpaca, then cancel any leftover orders
+            # from prior cycles so the current redistribution is unconstrained.
             pending_orders = self._sync_pending_orders()
             # Reconcile any drift between local positions and Alpaca's view
             # (external trades, manual UI edits, post-reset hydration).
             self.sync_local_state()
+            if self._cancel_stale_pending_orders(pending_orders) > 0:
+                # Treat state as clean: cash_guard reserves no pending value and
+                # the signal filter below won't skip any ticker.
+                pending_orders = {}
             pending_buy_tickers = {
                 t
                 for t, orders in pending_orders.items()

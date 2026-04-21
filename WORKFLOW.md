@@ -146,6 +146,11 @@ This is the core trading decision block. The trade lock prevents concurrent acce
    - If canceled/expired/rejected: mark order as canceled in DB
    - Return map of currently open orders on Alpaca
 
+1b. **Cancel stale pending orders** (`orchestrator/pipeline.py → _cancel_stale_pending_orders`):
+   - Any order still open on Alpaca is by definition leftover from a prior cycle (limit buy whose price moved, slow-filling sell, etc.)
+   - Cancel each one so the current redistribution is free to re-score, re-price, and re-submit without the old order blocking the ticker
+   - After cancellation, the pending-order map is treated as empty for the rest of Step B6 (no filter skips, cash guard reserves nothing for pending buys)
+
 2. **Get account state** from Alpaca (portfolio value, cash) — **API: Alpaca** (account)
 3. **Get live positions** from Alpaca (with avg_entry cost basis) — **API: Alpaca** (positions)
 4. **Save portfolio snapshot** to DB (value, cash, invested, peak)
