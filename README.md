@@ -43,7 +43,23 @@ The system supports multiple trading accounts, each with its own Alpaca credenti
 | **V3** — Custom | v2 | 5% | 3% | 30 min | Yes (sell < 55, 3% dead band) |
 | **V4** — No hold | v2 | 5% | 3% | None | Yes (sell < 55, 3% dead band) |
 
-Each account uses separate env vars (`ALPACA_API_KEY_V1`, `_V2`, `_V3`, `_V4`) and a separate database (`data/trading_v{1-4}.db`). Per-account parameters are configured in the `accounts:` section of `config.yaml` — any trading parameter can be overridden per account.
+Each account runs against its own Alpaca credentials and a separate database (`data/trading_v{1-4}.db`). Credential assignment is **decoupled from version naming** — define any number of freely-named key pairs in `.env` and point each version at one via `ALPACA_ACCOUNT_V{N}`:
+
+```dotenv
+# Named credential pairs (suffix can be anything)
+ALPACA_API_KEY_MAIN=PK...
+ALPACA_SECRET_KEY_MAIN=xx...
+ALPACA_API_KEY_WIFE=PK...
+ALPACA_SECRET_KEY_WIFE=yy...
+
+# Which pair each version should use
+ALPACA_ACCOUNT_V1=MAIN
+ALPACA_ACCOUNT_V2=MAIN
+ALPACA_ACCOUNT_V3=WIFE
+ALPACA_ACCOUNT_V4=WIFE
+```
+
+If `ALPACA_ACCOUNT_V{N}` is unset, the legacy naming convention still works (V1 → `ALPACA_API_KEY_V1`, etc.). Per-account strategy parameters are configured in the `accounts:` section of `config.yaml` — any trading parameter can be overridden per account.
 
 ## Web Dashboard
 
@@ -89,7 +105,7 @@ The macro overlay automatically adjusts trading parameters based on economic con
 | Path | Purpose |
 |------|---------|
 | `config.yaml` | All configurable parameters (including per-account overrides) |
-| `.env` | API keys per account: `ALPACA_API_KEY_V{1-4}`, Finnhub, FMP (gitignored) |
+| `.env` | Alpaca credential pairs (any suffix), `ALPACA_ACCOUNT_V{1-4}` mapping, Finnhub, FMP (gitignored) |
 | `data/trading_v{1-4}.db` | Per-account SQLite databases (positions, scores, fundamentals, orders) |
 | `data/logs/main.log` | Application logs (rotating, 50MB max) |
 | `data/logs/transactions.log` | Transaction log (buy/sell/exit events) |

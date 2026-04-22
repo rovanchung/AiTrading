@@ -11,7 +11,7 @@ Automated stock trading system.
 ## Key Files
 
 - `config.yaml` — all tunable parameters (thresholds, weights, schedule, filters)
-- `.env` — API keys: Alpaca (v1–v4), FMP, Finnhub (gitignored, never commit)
+- `.env` — API keys: Alpaca credential pairs (any suffix) + `ALPACA_ACCOUNT_V{1-4}` mapping, FMP, Finnhub (gitignored, never commit)
 - `data/trading_v{1,2,3,4}.db` — per-account SQLite databases (runtime, gitignored)
 - `aitrade` — CLI entry point (Python): interactive menu or `./aitrade <command>` (run, once, dry-run, scan, dashboard, db, logs, setup-db, install, info)
 - `main.py` — trading engine: `--dry-run`, `--once`, `--no-macro`, `--dashboard`, `--version v1|v2|v3|v4`, or continuous scheduler

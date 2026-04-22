@@ -330,62 +330,120 @@ def cmd_install_deps(_args):
 
 
 def cmd_configure_env(_args):
-    """Configure API keys in .env file."""
+    """Configure API keys in .env file.
+
+    Alpaca credential pairs can be named freely (e.g. MAIN, WIFE, V4_2).
+    V1-V4 account-to-key assignment is written as ALPACA_ACCOUNT_V{N}=<suffix>.
+    """
     env_file = os.path.join(PROJECT_ROOT, ".env")
-    existing = {}
+    values = {}
     if os.path.isfile(env_file):
         with open(env_file) as f:
             for line in f:
                 line = line.strip()
                 if "=" in line and not line.startswith("#"):
                     k, v = line.split("=", 1)
-                    existing[k] = v
+                    values[k] = v
 
     def mask(val):
         if len(val) <= 8:
             return val
         return val[:4] + "..." + val[-4:]
 
-    sections = [
-        ("V1 (Original)", [
-            ("ALPACA_API_KEY_V1", "Alpaca API Key", ""),
-            ("ALPACA_SECRET_KEY_V1", "Alpaca Secret Key", ""),
-        ]),
-        ("V2 (Anti-churn)", [
-            ("ALPACA_API_KEY_V2", "Alpaca API Key", ""),
-            ("ALPACA_SECRET_KEY_V2", "Alpaca Secret Key", ""),
-        ]),
-        ("V3 (Custom)", [
-            ("ALPACA_API_KEY_V3", "Alpaca API Key", ""),
-            ("ALPACA_SECRET_KEY_V3", "Alpaca Secret Key", ""),
-        ]),
-        ("V4 (No hold)", [
-            ("ALPACA_API_KEY_V4", "Alpaca API Key", ""),
-            ("ALPACA_SECRET_KEY_V4", "Alpaca Secret Key", ""),
-        ]),
-        ("Shared", [
-            ("ALPACA_BASE_URL", "Alpaca Base URL", "https://paper-api.alpaca.markets"),
-            ("FINNHUB_API_KEY", "Finnhub API Key (free at finnhub.io)", ""),
-            ("FMP_API_KEY", "FMP API Key (optional fallback)", ""),
-        ]),
-    ]
+    def find_pairs():
+        """Return sorted list of suffixes for which both API+secret exist."""
+        api_suffixes = {
+            k[len("ALPACA_API_KEY_"):]
+            for k in values
+            if k.startswith("ALPACA_API_KEY_") and values[k]
+        }
+        sec_suffixes = {
+            k[len("ALPACA_SECRET_KEY_"):]
+            for k in values
+            if k.startswith("ALPACA_SECRET_KEY_") and values[k]
+        }
+        return sorted(api_suffixes & sec_suffixes)
 
     print(f"\n  {BOLD}Configure API Keys{RESET}")
-    print(f"  {DIM}Press Enter to keep existing value.{RESET}")
+    print(f"  {DIM}Alpaca keys can be named freely. You then pick which")
+    print(f"  key each V1-V4 account uses.{RESET}")
 
-    values = dict(existing)  # preserve all existing keys
-    for section_name, keys in sections:
-        print(f"\n  {BOLD}{section_name}{RESET}")
-        for env_key, label, default in keys:
-            cur = existing.get(env_key, default)
-            if cur:
-                display = f"{YELLOW}{mask(cur)}{RESET}"
-            else:
-                display = f"{DIM}(not set){RESET}"
-            print(f"  {label}: {display}")
-            new_val = input(f"  New value: ").strip()
-            values[env_key] = new_val or cur
-            print()
+    # ── Alpaca credential pairs ────────────────────────────────────────
+    while True:
+        pairs = find_pairs()
+        print(f"\n  {BOLD}Alpaca credential pairs{RESET}")
+        if pairs:
+            for s in pairs:
+                api = values.get(f"ALPACA_API_KEY_{s}", "")
+                print(f"    {CYAN}{s}{RESET}  {YELLOW}{mask(api)}{RESET}")
+        else:
+            print(f"    {DIM}(none){RESET}")
+
+        action = input_prompt(
+            "Action: [a]dd  [e]dit  [d]elete  [Enter] continue", ""
+        ).lower()
+        if not action:
+            break
+        if action in ("a", "add"):
+            name = input_prompt("Suffix (e.g. MAIN, WIFE, V1)", "").strip().upper()
+            if not name:
+                continue
+            api = input_prompt(f"ALPACA_API_KEY_{name}", "").strip()
+            sec = input_prompt(f"ALPACA_SECRET_KEY_{name}", "").strip()
+            if api and sec:
+                values[f"ALPACA_API_KEY_{name}"] = api
+                values[f"ALPACA_SECRET_KEY_{name}"] = sec
+        elif action in ("e", "edit"):
+            if not pairs:
+                continue
+            name = input_prompt(f"Suffix to edit ({'/'.join(pairs)})", "").strip().upper()
+            if name not in pairs:
+                print(f"  {RED}Unknown suffix.{RESET}")
+                continue
+            cur_api = values.get(f"ALPACA_API_KEY_{name}", "")
+            cur_sec = values.get(f"ALPACA_SECRET_KEY_{name}", "")
+            api = input_prompt(f"ALPACA_API_KEY_{name}", cur_api).strip()
+            sec = input_prompt(f"ALPACA_SECRET_KEY_{name}", cur_sec).strip()
+            values[f"ALPACA_API_KEY_{name}"] = api
+            values[f"ALPACA_SECRET_KEY_{name}"] = sec
+        elif action in ("d", "delete"):
+            if not pairs:
+                continue
+            name = input_prompt(f"Suffix to delete ({'/'.join(pairs)})", "").strip().upper()
+            if name in pairs:
+                values.pop(f"ALPACA_API_KEY_{name}", None)
+                values.pop(f"ALPACA_SECRET_KEY_{name}", None)
+
+    # ── Account → key mapping ──────────────────────────────────────────
+    pairs = find_pairs()
+    print(f"\n  {BOLD}Assign a credential pair to each account{RESET}")
+    if pairs:
+        print(f"  {DIM}Available: {', '.join(pairs)}. Enter blank to clear.{RESET}")
+    else:
+        print(f"  {DIM}No credential pairs defined yet — skip or go back.{RESET}")
+
+    for ver in ("V1", "V2", "V3", "V4"):
+        cur = values.get(f"ALPACA_ACCOUNT_{ver}", "")
+        label = f"Account for {ver}" + (f" (currently {cur})" if cur else "")
+        new = input_prompt(label, cur).strip().upper()
+        if new:
+            values[f"ALPACA_ACCOUNT_{ver}"] = new
+        else:
+            values.pop(f"ALPACA_ACCOUNT_{ver}", None)
+
+    # ── Shared keys ────────────────────────────────────────────────────
+    print(f"\n  {BOLD}Shared keys{RESET}")
+    for env_key, label, default in [
+        ("ALPACA_BASE_URL", "Alpaca Base URL", "https://paper-api.alpaca.markets"),
+        ("FINNHUB_API_KEY", "Finnhub API Key (free at finnhub.io)", ""),
+        ("FMP_API_KEY", "FMP API Key (optional fallback)", ""),
+    ]:
+        cur = values.get(env_key, default)
+        display = f"{YELLOW}{mask(cur)}{RESET}" if cur else f"{DIM}(not set){RESET}"
+        print(f"  {label}: {display}")
+        new_val = input(f"  New value: ").strip()
+        values[env_key] = new_val or cur
+        print()
 
     with open(env_file, "w") as f:
         for key, val in values.items():

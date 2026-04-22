@@ -69,9 +69,7 @@ class Config:
 
     @property
     def alpaca_base_url(self) -> str:
-        return os.environ.get(
-            "ALPACA_BASE_URL", "https://paper-api.alpaca.markets"
-        )
+        return os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
     @property
     def finnhub_api_key(self) -> str:
@@ -91,30 +89,43 @@ class Config:
 
 
 def activate_version(version: str, config_path: str = "config.yaml") -> None:
-    """Set environment variables for a trading version (v1 or v2).
+    """Set environment variables for a trading version (v1..v4).
 
-    Swaps ALPACA_API_KEY / ALPACA_SECRET_KEY to the version-specific
-    credentials so all modules (including alpaca_data.py which reads
-    os.environ directly) use the correct account.
+    Picks the Alpaca credential pair to use for this version and copies it
+    into ALPACA_API_KEY / ALPACA_SECRET_KEY so downstream modules (e.g.
+    alpaca_data.py, which reads os.environ directly) use the correct account.
+
+    Key selection (in order of precedence):
+      1. ALPACA_ACCOUNT_{VERSION} — pointer to a suffix. When set, reads
+         ALPACA_API_KEY_{suffix} / ALPACA_SECRET_KEY_{suffix}. This lets the
+         user freely name credential pairs (e.g. MAIN, WIFE, V4_2) and map
+         any pair to any version without renaming the keys themselves.
+      2. ALPACA_API_KEY_{VERSION} / ALPACA_SECRET_KEY_{VERSION} — legacy
+         naming convention (still supported for backward compatibility).
+      3. ALPACA_API_KEY / ALPACA_SECRET_KEY — bare names; final fallback.
 
     Must be called BEFORE any Alpaca client is initialized.
     """
     project_root = Path(__file__).parent.parent
     load_dotenv(project_root / ".env")
 
-    suffix = f"_{version.upper()}"  # _V1, _V2, _V3, etc.
-    api_key = os.environ.get(f"ALPACA_API_KEY{suffix}", "")
-    secret_key = os.environ.get(f"ALPACA_SECRET_KEY{suffix}", "")
+    version_upper = version.upper()
+    pointer = os.environ.get(f"ALPACA_ACCOUNT_{version_upper}", "").strip()
+    suffix = pointer or version_upper
 
-    # Fallback: v1 can use the base ALPACA_API_KEY / ALPACA_SECRET_KEY
-    if version == "v1" and (not api_key or api_key == "CHANGE_ME"):
+    api_key = os.environ.get(f"ALPACA_API_KEY_{suffix}", "")
+    secret_key = os.environ.get(f"ALPACA_SECRET_KEY_{suffix}", "")
+
+    if not api_key or api_key == "CHANGE_ME":
         api_key = os.environ.get("ALPACA_API_KEY", "")
         secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
 
     if not api_key or not secret_key or api_key == "CHANGE_ME":
         raise ConfigError(
             f"Alpaca credentials not configured for {version}. "
-            f"Set ALPACA_API_KEY{suffix} and ALPACA_SECRET_KEY{suffix} in .env"
+            f"Set ALPACA_API_KEY_{suffix} / ALPACA_SECRET_KEY_{suffix} in .env, "
+            f"or set ALPACA_ACCOUNT_{version_upper}=<suffix> to point at a "
+            f"differently-named key pair."
         )
 
     os.environ["ALPACA_API_KEY"] = api_key
@@ -123,6 +134,7 @@ def activate_version(version: str, config_path: str = "config.yaml") -> None:
     # Reset lazy-initialized alpaca data clients so they pick up new creds
     try:
         from core import alpaca_data
+
         alpaca_data._stock_client = None
         alpaca_data._news_client = None
     except ImportError:

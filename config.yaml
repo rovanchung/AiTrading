@@ -67,14 +67,16 @@ database:
   path: "data/trading.db"
 
 accounts:
+  # Alpaca credentials are picked per-account in .env. For each V1-V4,
+  # set ALPACA_ACCOUNT_V{N}=<suffix> to point at the credential pair
+  # ALPACA_API_KEY_{suffix} / ALPACA_SECRET_KEY_{suffix}. If unset, the
+  # legacy convention (suffix == version, e.g. ALPACA_API_KEY_V1) applies.
   v1:
     database_path: "data/trading_v1.db"
     strategy_version: "v1"
-    # Uses ALPACA_API_KEY / ALPACA_SECRET_KEY from .env
   v2:
     database_path: "data/trading_v2.db"
     strategy_version: "v2"
-    # Uses ALPACA_API_KEY_V2 / ALPACA_SECRET_KEY_V2 from .env
   v3:
     database_path: "data/trading_v3.db"
     strategy_version: "v2"
@@ -82,11 +84,9 @@ accounts:
     v2_loss_cut_pct: 0.03         # same as v3: -3% stop loss
     v2_loss_cut_vs_prior_close_pct: 0.03  # -3% from prior close -> sell
     v2_min_hold_minutes: 480
-    # Uses ALPACA_API_KEY_V3 / ALPACA_SECRET_KEY_V3 from .env
   v4:
     database_path: "data/trading_v4.db"
     strategy_version: "v2"
     v2_profit_take_pct: 0.05      # same as v3: +5% profit target
     v2_loss_cut_pct: 0.03         # same as v3: -3% stop loss
     v2_min_hold_minutes: 0        # no hold time (like v1)
-    # Uses ALPACA_API_KEY_V4 / ALPACA_SECRET_KEY_V4 from .env
