@@ -2,11 +2,16 @@
 """AiTrading — Automated Stock Trading System.
 
 Usage:
-    python main.py              # Start the trading scheduler
-    python main.py --once       # Run one full cycle and exit
-    python main.py --dry-run    # Run one cycle without executing trades
-    python main.py --no-macro   # Disable macro overlay (combine with any mode)
-    python main.py --dashboard  # Launch the web dashboard
+    python main.py                          # Start the trading scheduler
+    python main.py --once                   # Run one full cycle and exit
+    python main.py --dry-run                # Run one cycle without executing trades
+    python main.py --no-macro               # Disable macro overlay (combine with any mode)
+    python main.py --dashboard              # Launch the web dashboard
+    python main.py --version v4             # Select strategy version (v1..v4)
+    python main.py --version v4 --account MAIN  # Run v4 strategy against a specific Alpaca account.
+                                            # Multiple processes with the same version but
+                                            # different --account values run concurrently, each
+                                            # with its own data/trading_{version}_{account}.db.
 """
 
 import argparse
@@ -25,34 +30,57 @@ from monitor.alerts import AlertManager
 def main():
     parser = argparse.ArgumentParser(description="AiTrading - Automated Stock Trading")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
-    parser.add_argument("--dry-run", action="store_true", help="Analyze only, no trades")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Analyze only, no trades"
+    )
     parser.add_argument("--sync", action="store_true",
                         help="Reconcile local DB positions/cash with Alpaca and exit")
     parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard")
-    parser.add_argument("--port", type=int, default=5000, help="Dashboard port (default: 5000)")
-    parser.add_argument("--no-macro", action="store_true", help="Disable macro overlay (use base config values)")
+    parser.add_argument(
+        "--port", type=int, default=5000, help="Dashboard port (default: 5000)"
+    )
+    parser.add_argument(
+        "--no-macro",
+        action="store_true",
+        help="Disable macro overlay (use base config values)",
+    )
     parser.add_argument("--config", default="config.yaml", help="Config file path")
-    parser.add_argument("--version", choices=["v1", "v2", "v3", "v4"], default=None,
-                        help="Account version (v1=original, v2=anti-churn, v3=custom, v4=no-hold)")
+    parser.add_argument(
+        "--version",
+        choices=["v1", "v2", "v3", "v4"],
+        default=None,
+        help="Account version (v1=original, v2=anti-churn, v3=custom, v4=no-hold)",
+    )
+    parser.add_argument(
+        "--account",
+        default=None,
+        help="Alpaca credential suffix (e.g. MAIN, WIFE). Overrides the "
+        ".env mapping and uses a per-account DB "
+        "(data/trading_{version}_{account}.db) so the same version "
+        "can run against multiple accounts concurrently.",
+    )
     args = parser.parse_args()
 
     # Activate version credentials before any Alpaca client init
     if args.version:
-        activate_version(args.version, args.config)
+        activate_version(args.version, args.config, account=args.account)
 
     # Dashboard mode — launch Flask web UI (no trading dependencies needed)
     if args.dashboard:
         from dashboard.app import create_app
-        config = load_config(args.config, version=args.version)
+
+        config = load_config(args.config, version=args.version, account=args.account)
         app = create_app(db_path=config.db_path)
         ver_label = f" ({args.version})" if args.version else ""
-        print(f"Starting AiTrading Dashboard{ver_label} at http://127.0.0.1:{args.port}")
+        print(
+            f"Starting AiTrading Dashboard{ver_label} at http://127.0.0.1:{args.port}"
+        )
         print(f"Database: {app.config['DB_PATH']}")
         app.run(host="127.0.0.1", port=args.port, debug=False)
         return
 
     # Initialize
-    config = load_config(args.config, version=args.version)
+    config = load_config(args.config, version=args.version, account=args.account)
     if args.no_macro:
         config.set("macro.enabled", False)
     logger = setup_logging(config)
@@ -119,7 +147,9 @@ def main():
                 profit_take = config.trading.get("profit_take_pct", 0.01)
                 loss_cut = config.trading.get("loss_cut_pct", 0.005)
                 pp = config.trading.get("purchase_power_pct", 0.50)
-                print(f"    Profit take: +{profit_take:.1%}  |  Loss cut: -{loss_cut:.1%}")
+                print(
+                    f"    Profit take: +{profit_take:.1%}  |  Loss cut: -{loss_cut:.1%}"
+                )
                 print(f"    Purchase power: {pp:.0%} of portfolio")
             else:
                 print("\n=== MACRO OVERLAY DISABLED ===")

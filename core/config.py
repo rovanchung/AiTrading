@@ -88,7 +88,9 @@ class Config:
         return self.get("logging.level", "INFO")
 
 
-def activate_version(version: str, config_path: str = "config.yaml") -> None:
+def activate_version(
+    version: str, config_path: str = "config.yaml", account: str = None
+) -> None:
     """Set environment variables for a trading version (v1..v4).
 
     Picks the Alpaca credential pair to use for this version and copies it
@@ -96,13 +98,16 @@ def activate_version(version: str, config_path: str = "config.yaml") -> None:
     alpaca_data.py, which reads os.environ directly) use the correct account.
 
     Key selection (in order of precedence):
-      1. ALPACA_ACCOUNT_{VERSION} — pointer to a suffix. When set, reads
-         ALPACA_API_KEY_{suffix} / ALPACA_SECRET_KEY_{suffix}. This lets the
-         user freely name credential pairs (e.g. MAIN, WIFE, V4_2) and map
-         any pair to any version without renaming the keys themselves.
-      2. ALPACA_API_KEY_{VERSION} / ALPACA_SECRET_KEY_{VERSION} — legacy
+      1. `account` argument (from --account CLI flag) — wins when set.
+         Enables running the same version against different Alpaca accounts
+         concurrently in separate processes.
+      2. ALPACA_ACCOUNT_{VERSION} — .env pointer to a suffix. Used when no
+         CLI override is given. Lets the user freely name credential pairs
+         (e.g. MAIN, WIFE, V4_2) and map any pair to a version without
+         renaming the keys themselves.
+      3. ALPACA_API_KEY_{VERSION} / ALPACA_SECRET_KEY_{VERSION} — legacy
          naming convention (still supported for backward compatibility).
-      3. ALPACA_API_KEY / ALPACA_SECRET_KEY — bare names; final fallback.
+      4. ALPACA_API_KEY / ALPACA_SECRET_KEY — bare names; final fallback.
 
     Must be called BEFORE any Alpaca client is initialized.
     """
@@ -110,22 +115,26 @@ def activate_version(version: str, config_path: str = "config.yaml") -> None:
     load_dotenv(project_root / ".env")
 
     version_upper = version.upper()
-    pointer = os.environ.get(f"ALPACA_ACCOUNT_{version_upper}", "").strip()
-    suffix = pointer or version_upper
+    if account:
+        suffix = account.strip().upper()
+    else:
+        pointer = os.environ.get(f"ALPACA_ACCOUNT_{version_upper}", "").strip()
+        suffix = pointer or version_upper
 
     api_key = os.environ.get(f"ALPACA_API_KEY_{suffix}", "")
     secret_key = os.environ.get(f"ALPACA_SECRET_KEY_{suffix}", "")
 
-    if not api_key or api_key == "CHANGE_ME":
+    if not account and (not api_key or api_key == "CHANGE_ME"):
         api_key = os.environ.get("ALPACA_API_KEY", "")
         secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
 
     if not api_key or not secret_key or api_key == "CHANGE_ME":
         raise ConfigError(
-            f"Alpaca credentials not configured for {version}. "
+            f"Alpaca credentials not configured for {version} "
+            f"(account={account or 'default'}). "
             f"Set ALPACA_API_KEY_{suffix} / ALPACA_SECRET_KEY_{suffix} in .env, "
-            f"or set ALPACA_ACCOUNT_{version_upper}=<suffix> to point at a "
-            f"differently-named key pair."
+            f"or pass --account <suffix> / set ALPACA_ACCOUNT_{version_upper} "
+            f"to point at a differently-named key pair."
         )
 
     os.environ["ALPACA_API_KEY"] = api_key
@@ -141,11 +150,18 @@ def activate_version(version: str, config_path: str = "config.yaml") -> None:
         pass
 
 
-def load_config(config_path: str = "config.yaml", version: str = None) -> Config:
+def load_config(
+    config_path: str = "config.yaml", version: str = None, account: str = None
+) -> Config:
     """Load configuration from YAML file and .env.
 
-    If version is specified (v1/v2), applies account-specific overrides
-    for database path and strategy version.
+    If `version` is specified (v1..v4), applies account-specific overrides
+    for database path and strategy parameters from config.yaml.
+
+    If `account` is also specified, overrides the database path to
+    `data/trading_{version}_{account_lower}.db` so concurrent processes
+    running the same version against different Alpaca accounts don't
+    collide on the same SQLite file.
     """
     project_root = Path(__file__).parent.parent
     load_dotenv(project_root / ".env")
@@ -168,5 +184,11 @@ def load_config(config_path: str = "config.yaml", version: str = None) -> Config
         for key, val in acct.items():
             if key != "database_path":
                 trading[key] = val
+
+    # Per-account DB override — must be unique per (version, account) so
+    # simultaneous processes don't fight over the same SQLite file.
+    if version and account:
+        db_path = f"data/trading_{version}_{account.lower()}.db"
+        data.setdefault("database", {})["path"] = db_path
 
     return Config(data)

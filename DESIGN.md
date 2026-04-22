@@ -257,7 +257,7 @@ Profit/loss thresholds and hold rules vary by account version. Per-account overr
 | Purchase power | 50% | 50% | 50% | 50% | Capital allocated for redistribution |
 | Buy threshold | 60 (macro-adjusted) | 60 (macro-adjusted) | 60 (macro-adjusted) | 60 (macro-adjusted) | Minimum composite score to qualify |
 
-Each account runs with a separate database (`data/trading_v{1-4}.db`) and Alpaca credentials. Credentials are resolved via `ALPACA_ACCOUNT_V{N}=<suffix>` in `.env`, which points to a freely-named `ALPACA_API_KEY_{suffix}` / `ALPACA_SECRET_KEY_{suffix}` pair (legacy `ALPACA_API_KEY_V{N}` naming is still honored as fallback). V2/V3/V4 use the v2 strategy engine (hysteresis + dead band); V1 uses the original logic.
+Each strategy version runs with its own database and Alpaca credentials. Credentials can be selected per-process via `--account <suffix>` (picks `ALPACA_API_KEY_{suffix}` / `ALPACA_SECRET_KEY_{suffix}` and uses a unique `data/trading_{version}_{account}.db`), which lets the same version run concurrently against multiple Alpaca accounts. Without `--account`, credentials fall back to the `ALPACA_ACCOUNT_V{N}=<suffix>` mapping in `.env`, then to legacy `ALPACA_API_KEY_V{N}` naming, then to bare `ALPACA_API_KEY`. V2/V3/V4 use the v2 strategy engine (hysteresis + dead band); V1 uses the original logic.
 
 Note: Previous risk rules (max positions, sector limits, cash reserve, stop-loss, trailing stop, take-profit, drawdown) are deprecated and commented out in `config.yaml`. Position sizing is now handled entirely by the score-proportional redistribution engine.
 

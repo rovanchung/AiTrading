@@ -27,7 +27,7 @@ For detailed information on operation modes, configuration, and safety features,
 
 ## Strategy Versions
 
-The system supports multiple trading accounts, each with its own Alpaca credentials, database, and strategy parameters. Run them simultaneously:
+The system supports multiple strategy versions, each with its own parameters. Run several simultaneously — each process writes to its own database:
 
 ```bash
 ./aitrade run --version v1 &
@@ -43,23 +43,34 @@ The system supports multiple trading accounts, each with its own Alpaca credenti
 | **V3** — Custom | v2 | 5% | 3% | 30 min | Yes (sell < 55, 3% dead band) |
 | **V4** — No hold | v2 | 5% | 3% | None | Yes (sell < 55, 3% dead band) |
 
-Each account runs against its own Alpaca credentials and a separate database (`data/trading_v{1-4}.db`). Credential assignment is **decoupled from version naming** — define any number of freely-named key pairs in `.env` and point each version at one via `ALPACA_ACCOUNT_V{N}`:
+## Alpaca Accounts
+
+Credential selection is **decoupled from version naming** so you can run the same version against different Alpaca accounts concurrently.
+
+Define any number of freely-named credential pairs in `.env`:
 
 ```dotenv
-# Named credential pairs (suffix can be anything)
 ALPACA_API_KEY_MAIN=PK...
 ALPACA_SECRET_KEY_MAIN=xx...
 ALPACA_API_KEY_WIFE=PK...
 ALPACA_SECRET_KEY_WIFE=yy...
-
-# Which pair each version should use
-ALPACA_ACCOUNT_V1=MAIN
-ALPACA_ACCOUNT_V2=MAIN
-ALPACA_ACCOUNT_V3=WIFE
-ALPACA_ACCOUNT_V4=WIFE
 ```
 
-If `ALPACA_ACCOUNT_V{N}` is unset, the legacy naming convention still works (V1 → `ALPACA_API_KEY_V1`, etc.). Per-account strategy parameters are configured in the `accounts:` section of `config.yaml` — any trading parameter can be overridden per account.
+Then pick an account per-process with `--account` (preferred for concurrent runs of the same version):
+
+```bash
+./aitrade --version v4 --account MAIN run &   # data/trading_v4_main.db
+./aitrade --version v4 --account WIFE run &   # data/trading_v4_wife.db
+```
+
+Each `--account` value derives a unique DB path (`data/trading_{version}_{account}.db`), so simultaneous processes never fight over the same SQLite file.
+
+If `--account` is omitted, credentials are resolved in this order:
+1. `ALPACA_ACCOUNT_V{N}=<suffix>` in `.env` — per-version mapping.
+2. `ALPACA_API_KEY_V{N}` / `ALPACA_SECRET_KEY_V{N}` — legacy naming.
+3. Bare `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` — final fallback.
+
+Per-account strategy parameters are configured in the `accounts:` section of `config.yaml` — any trading parameter can be overridden per version.
 
 ## Web Dashboard
 
@@ -106,7 +117,8 @@ The macro overlay automatically adjusts trading parameters based on economic con
 |------|---------|
 | `config.yaml` | All configurable parameters (including per-account overrides) |
 | `.env` | Alpaca credential pairs (any suffix), `ALPACA_ACCOUNT_V{1-4}` mapping, Finnhub, FMP (gitignored) |
-| `data/trading_v{1-4}.db` | Per-account SQLite databases (positions, scores, fundamentals, orders) |
+| `data/trading_v{1-4}.db` | Default per-version SQLite databases (when `--account` is not passed) |
+| `data/trading_{version}_{account}.db` | Per-(version, account) DBs when `--account` is specified |
 | `data/logs/main.log` | Application logs (rotating, 50MB max) |
 | `data/logs/transactions.log` | Transaction log (buy/sell/exit events) |
 | `data/logs/alerts.json` | Trading alerts (opens, closes, stops, errors) |

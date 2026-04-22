@@ -22,6 +22,12 @@ Commands:
     ./aitrade logs [main|txn|alerts]  # View logs
     ./aitrade db [positions|closed|orders|portfolio]  # Query database
     ./aitrade info                # Show detailed reference guide
+
+Account selection:
+    ./aitrade --version v4 run                          # v4 strategy, credentials via .env mapping
+    ./aitrade --version v4 --account MAIN run &         # v4 strategy vs. MAIN account
+    ./aitrade --version v4 --account WIFE run &         # v4 strategy vs. WIFE account, concurrent
+    # Each gets its own DB: data/trading_v4_main.db, data/trading_v4_wife.db
 """
 
 import os
@@ -48,11 +54,17 @@ PYTHON = _VENV_PY
 PIP = os.environ.get("PIP", os.path.expanduser("~/python_env/torch-env/bin/pip"))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "trading.db")
 
-# Active version (set by menu or --version flag)
+# Active version and optional account (set by menus or CLI flags)
 ACTIVE_VERSION = None
+ACTIVE_ACCOUNT = None
 
 def _version_db_path():
-    """Return the DB path for the active version."""
+    """Return the DB path for the active (version, account) combo."""
+    if ACTIVE_VERSION and ACTIVE_ACCOUNT:
+        return os.path.join(
+            PROJECT_ROOT, "data",
+            f"trading_{ACTIVE_VERSION}_{ACTIVE_ACCOUNT.lower()}.db",
+        )
     if ACTIVE_VERSION:
         import yaml
         with open(os.path.join(PROJECT_ROOT, "config.yaml")) as f:
@@ -65,13 +77,18 @@ def _version_db_path():
     return DB_PATH
 
 def _version_args():
-    """Return --version args list for the active version."""
+    """Return --version / --account args list for the active selection."""
+    args = []
     if ACTIVE_VERSION:
-        return ["--version", ACTIVE_VERSION]
-    return []
+        args += ["--version", ACTIVE_VERSION]
+    if ACTIVE_ACCOUNT:
+        args += ["--account", ACTIVE_ACCOUNT]
+    return args
 
 def _version_label():
     """Short label for display."""
+    if ACTIVE_VERSION and ACTIVE_ACCOUNT:
+        return f" [{ACTIVE_VERSION.upper()}:{ACTIVE_ACCOUNT.upper()}]"
     if ACTIVE_VERSION:
         return f" [{ACTIVE_VERSION.upper()}]"
     return ""
@@ -717,9 +734,28 @@ def cmd_info(_args):
 
 # ── Interactive menus ───────────────────────────────────────────────────────
 
+def _available_accounts():
+    """Return sorted list of suffixes with both API and secret keys in .env."""
+    env_file = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.isfile(env_file):
+        return []
+    values = {}
+    with open(env_file) as f:
+        for line in f:
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                values[k] = v
+    api = {k[len("ALPACA_API_KEY_"):] for k in values
+           if k.startswith("ALPACA_API_KEY_") and values[k]}
+    sec = {k[len("ALPACA_SECRET_KEY_"):] for k in values
+           if k.startswith("ALPACA_SECRET_KEY_") and values[k]}
+    return sorted(api & sec)
+
+
 def menu_version():
-    """Select trading strategy version."""
-    global ACTIVE_VERSION
+    """Select trading strategy version, then optionally a specific account."""
+    global ACTIVE_VERSION, ACTIVE_ACCOUNT
     print(f"\n  {BOLD}Strategy comparison{RESET}")
     print(f"  -------------------\n")
     for line in _strategy_table_lines(ACTIVE_VERSION):
@@ -735,6 +771,20 @@ def menu_version():
     if choice is None:
         return False
     ACTIVE_VERSION = choice
+
+    # Offer account picker so the same version can run against different
+    # Alpaca accounts concurrently (each gets its own DB).
+    accounts = _available_accounts()
+    if accounts:
+        items = [
+            {"label": "Default", "desc": f"Use .env mapping (ALPACA_ACCOUNT_{choice.upper()})", "value": ""},
+        ] + [{"label": s, "desc": f"ALPACA_API_KEY_{s}", "value": s} for s in accounts]
+        acct = pick_menu(f"Select Alpaca Account for {choice.upper()}", items, back_label="Back")
+        if acct is None:
+            return False
+        ACTIVE_ACCOUNT = acct or None
+    else:
+        ACTIVE_ACCOUNT = None
     return True
 
 
@@ -746,6 +796,8 @@ def menu_main():
 
     while True:
         ver = ACTIVE_VERSION.upper() if ACTIVE_VERSION else "?"
+        if ACTIVE_ACCOUNT:
+            ver = f"{ver}:{ACTIVE_ACCOUNT}"
         choice = pick_menu(f"AiTrading [{ver}]", [
             {"label": "Dry run",        "desc": "Scan and analyze, no trades",     "value": "dry-run"},
             {"label": "Run once",       "desc": "One full scan-analyze-trade cycle","value": "once"},
@@ -905,7 +957,7 @@ def menu_setup():
 # ── CLI dispatch ────────────────────────────────────────────────────────────
 
 def cli_main():
-    global ACTIVE_VERSION
+    global ACTIVE_VERSION, ACTIVE_ACCOUNT
 
     # Graceful Ctrl-C everywhere
     signal.signal(signal.SIGINT, lambda *_: (print(f"\n{SHOW_CURSOR}"), sys.exit(0)))
@@ -917,13 +969,22 @@ def cli_main():
         menu_main()
         return
 
-    # Extract --version flag before dispatch
+    # Extract --version and --account flags before dispatch
     args = sys.argv[1:]
-    for i, a in enumerate(args):
+    out = []
+    i = 0
+    while i < len(args):
+        a = args[i]
         if a == "--version" and i + 1 < len(args):
             ACTIVE_VERSION = args[i + 1]
-            args = args[:i] + args[i + 2:]
-            break
+            i += 2
+        elif a == "--account" and i + 1 < len(args):
+            ACTIVE_ACCOUNT = args[i + 1]
+            i += 2
+        else:
+            out.append(a)
+            i += 1
+    args = out
 
     command = args[0] if args else "help"
     rest = args[1:]
