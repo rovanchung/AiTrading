@@ -191,7 +191,7 @@ class PortfolioManager:
         # Also exclude tickers being sold this cycle
         excluded = profit_sold_tickers | cooldown_tickers
         if cooldown_tickers:
-            logger.info(f"Cooldown active for: {cooldown_tickers}")
+            logger.info(f"[redistribute] cooldown active: {sorted(cooldown_tickers)}")
 
         # Build score lookup
         score_map = {c.ticker: c.composite for c in candidates}
@@ -203,7 +203,22 @@ class PortfolioManager:
             if c.composite >= buy_threshold and c.ticker not in excluded
         ]
 
+        available_capital = portfolio_value * purchase_power_pct
+        logger.info(
+            f"[redistribute] portfolio=${portfolio_value:,.2f} "
+            f"purchase_power={purchase_power_pct:.0%} "
+            f"available=${available_capital:,.2f} "
+            f"buy_threshold={buy_threshold} sell_threshold={sell_threshold} "
+            f"dead_band={dead_band_pct:.1%} | "
+            f"candidates={len(candidates)} qualifying={len(qualifying)} "
+            f"held={len(positions)}"
+        )
+
         if not qualifying:
+            logger.info(
+                "[redistribute] no qualifying candidates; "
+                "checking held positions for non-qualifying sells"
+            )
             # Sell all held positions that aren't being sold in step 1
             # v2: respect sell_threshold hysteresis
             return self._sell_non_qualifying(
@@ -215,7 +230,6 @@ class PortfolioManager:
 
         # Calculate proportional allocation
         total_score = sum(c.composite for c in qualifying)
-        available_capital = portfolio_value * purchase_power_pct
 
         # Build current holdings map (qty from Alpaca for accuracy)
         held_map = {}
@@ -226,6 +240,14 @@ class PortfolioManager:
 
         qualifying_tickers = {c.ticker for c in qualifying}
         signals = []
+        stats = {
+            "buy": 0, "sell_reduce": 0, "hold_in_band": 0,
+            "skip_dead_band": 0, "skip_min_hold": 0, "skip_no_price": 0,
+            "no_longer_qualifies": 0, "held_above_sell_threshold": 0,
+        }
+        planned_target = 0.0  # sum of target_qty * price across qualifying
+        planned_buy_cost = 0.0
+        planned_sell_value = 0.0
 
         # Generate signals to reach target allocation
         for c in qualifying:
@@ -239,59 +261,83 @@ class PortfolioManager:
             else:
                 df = data.get(c.ticker)
                 if df is None or df.empty:
+                    logger.info(
+                        f"[redistribute] {c.ticker} score={c.composite:.1f} "
+                        f"target={target_pct:.1%}(${target_dollars:,.2f}) → "
+                        f"skip: no price data"
+                    )
+                    stats["skip_no_price"] += 1
                     continue
                 current_price = df["Close"].iloc[-1]
 
             if current_price <= 0:
+                logger.info(
+                    f"[redistribute] {c.ticker} score={c.composite:.1f} "
+                    f"target={target_pct:.1%}(${target_dollars:,.2f}) → "
+                    f"skip: price={current_price}"
+                )
+                stats["skip_no_price"] += 1
                 continue
 
             target_qty = int(target_dollars / current_price)
             current_qty = held_map.get(c.ticker, 0)
+            current_dollars = current_qty * current_price
+            target_qty_dollars = target_qty * current_price
+            planned_target += target_qty_dollars
+
+            base = (
+                f"[redistribute] {c.ticker} score={c.composite:.1f} "
+                f"target={target_pct:.1%}(${target_dollars:,.2f}) "
+                f"price=${current_price:,.2f} "
+                f"target_qty={target_qty} held={current_qty}"
+            )
 
             if target_qty > current_qty:
-                # Buy more — check dead band
                 buy_qty = target_qty - current_qty
-                if buy_qty > 0:
-                    # v2: skip if allocation difference is within dead band
-                    if dead_band_pct > 0 and current_qty > 0:
-                        current_dollars = current_qty * current_price
-                        alloc_diff = (
-                            abs(target_dollars - current_dollars) / portfolio_value
+                # v2: skip if allocation difference is within dead band (only
+                # applies when already holding — initial entries always pass)
+                if dead_band_pct > 0 and current_qty > 0:
+                    alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
+                    if alloc_diff <= dead_band_pct:
+                        logger.info(
+                            f"{base} gap={alloc_diff:.1%} → skip: within dead band"
                         )
-                        if alloc_diff <= dead_band_pct:
-                            continue
-                    signals.append(
-                        Signal(
-                            ticker=c.ticker,
-                            action="buy",
-                            reason=f"redistribution (score={c.composite:.1f}, "
-                            f"target={target_pct:.1%})",
-                            score=c.composite,
-                            suggested_qty=buy_qty,
-                        )
-                    )
+                        stats["skip_dead_band"] += 1
+                        continue
+                cost = buy_qty * current_price
+                planned_buy_cost += cost
+                stats["buy"] += 1
+                logger.info(f"{base} → BUY {buy_qty} (~${cost:,.2f})")
+                signals.append(Signal(
+                    ticker=c.ticker, action="buy",
+                    reason=f"redistribution (score={c.composite:.1f}, "
+                           f"target={target_pct:.1%})",
+                    score=c.composite, suggested_qty=buy_qty,
+                ))
             elif target_qty < current_qty:
-                # Sell excess — check dead band
                 sell_qty = current_qty - target_qty
-                if sell_qty > 0:
-                    # v2: skip if allocation difference is within dead band
-                    if dead_band_pct > 0:
-                        current_dollars = current_qty * current_price
-                        alloc_diff = (
-                            abs(target_dollars - current_dollars) / portfolio_value
+                # v2: skip if allocation difference is within dead band
+                if dead_band_pct > 0:
+                    alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
+                    if alloc_diff <= dead_band_pct:
+                        logger.info(
+                            f"{base} gap={alloc_diff:.1%} → skip: within dead band"
                         )
-                        if alloc_diff <= dead_band_pct:
-                            continue
-                    signals.append(
-                        Signal(
-                            ticker=c.ticker,
-                            action="sell",
-                            reason=f"redistribution_reduce (score={c.composite:.1f}, "
-                            f"target={target_pct:.1%})",
-                            score=c.composite,
-                            suggested_qty=sell_qty,
-                        )
-                    )
+                        stats["skip_dead_band"] += 1
+                        continue
+                proceeds = sell_qty * current_price
+                planned_sell_value += proceeds
+                stats["sell_reduce"] += 1
+                logger.info(f"{base} → SELL {sell_qty} (~${proceeds:,.2f})")
+                signals.append(Signal(
+                    ticker=c.ticker, action="sell",
+                    reason=f"redistribution_reduce (score={c.composite:.1f}, "
+                           f"target={target_pct:.1%})",
+                    score=c.composite, suggested_qty=sell_qty,
+                ))
+            else:
+                stats["hold_in_band"] += 1
+                logger.info(f"{base} → hold (already at target)")
 
         # Sell positions that no longer qualify
         for pos in positions:
@@ -300,18 +346,46 @@ class PortfolioManager:
                 and pos.ticker not in profit_sold_tickers
             ):
                 ticker_score = score_map.get(pos.ticker, 0)
+                live = alpaca_map.get(pos.ticker)
+                price = live["current_price"] if live else 0.0
+                pos_value = pos.qty * price
                 # v2: only sell if score dropped below sell_threshold (hysteresis)
                 if ticker_score >= sell_threshold:
-                    continue
-                signals.append(
-                    Signal(
-                        ticker=pos.ticker,
-                        action="sell",
-                        reason="no_longer_qualifies",
-                        score=0,
-                        suggested_qty=pos.qty,
+                    stats["held_above_sell_threshold"] += 1
+                    logger.info(
+                        f"[redistribute] {pos.ticker} score={ticker_score:.1f} "
+                        f"below buy_threshold but above sell_threshold "
+                        f"({sell_threshold}) → hold"
                     )
+                    continue
+                planned_sell_value += pos_value
+                stats["no_longer_qualifies"] += 1
+                logger.info(
+                    f"[redistribute] {pos.ticker} score={ticker_score:.1f} "
+                    f"qty={pos.qty} (~${pos_value:,.2f}) → "
+                    f"SELL: no_longer_qualifies (score<{sell_threshold})"
                 )
+                signals.append(Signal(
+                    ticker=pos.ticker, action="sell",
+                    reason="no_longer_qualifies",
+                    score=0, suggested_qty=pos.qty,
+                ))
+
+        rounding_gap = max(0.0, available_capital - planned_target)
+        gap_pct = (rounding_gap / available_capital) if available_capital > 0 else 0.0
+        total_sells = stats["sell_reduce"] + stats["no_longer_qualifies"]
+        logger.info(
+            f"[redistribute] summary: "
+            f"buys={stats['buy']} (~${planned_buy_cost:,.2f}) "
+            f"sells={total_sells} (~${planned_sell_value:,.2f}) | "
+            f"skip_dead_band={stats['skip_dead_band']} "
+            f"skip_min_hold={stats['skip_min_hold']} "
+            f"hold_in_band={stats['hold_in_band']} "
+            f"held_above_sell_threshold={stats['held_above_sell_threshold']} | "
+            f"available=${available_capital:,.2f} "
+            f"planned_deployed=${planned_target:,.2f} "
+            f"rounding_gap=${rounding_gap:,.2f} ({gap_pct:.1%} of available)"
+        )
 
         return signals
 
