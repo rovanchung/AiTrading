@@ -253,9 +253,15 @@ class PortfolioManager:
         qualifying_tickers = {c.ticker for c in qualifying}
         signals = []
         stats = {
-            "buy": 0, "sell_reduce": 0, "hold_in_band": 0,
-            "skip_dead_band": 0, "skip_min_hold": 0, "skip_no_price": 0,
-            "no_longer_qualifies": 0, "held_above_sell_threshold": 0,
+            "buy": 0,
+            "sell_reduce": 0,
+            "hold_in_band": 0,
+            "skip_dead_band": 0,
+            "skip_min_hold": 0,
+            "skip_no_price": 0,
+            "skip_no_score": 0,
+            "no_longer_qualifies": 0,
+            "held_above_sell_threshold": 0,
         }
         planned_target = 0.0  # sum of target_qty * price across qualifying
         planned_buy_cost = 0.0
@@ -271,7 +277,9 @@ class PortfolioManager:
                 cap_dollars = portfolio_value * max_per_pos_pct
                 if target_dollars > cap_dollars:
                     target_dollars = cap_dollars
-                    target_pct = cap_dollars / available_capital if available_capital > 0 else 0
+                    target_pct = (
+                        cap_dollars / available_capital if available_capital > 0 else 0
+                    )
 
             # Get current price
             live = alpaca_map.get(c.ticker)
@@ -342,12 +350,16 @@ class PortfolioManager:
                 planned_buy_cost += cost
                 stats["buy"] += 1
                 logger.info(f"{base} → BUY {buy_qty} (~${cost:,.2f})")
-                signals.append(Signal(
-                    ticker=c.ticker, action="buy",
-                    reason=f"redistribution (score={c.composite:.1f}, "
-                           f"target={target_pct:.1%})",
-                    score=c.composite, suggested_qty=buy_qty,
-                ))
+                signals.append(
+                    Signal(
+                        ticker=c.ticker,
+                        action="buy",
+                        reason=f"redistribution (score={c.composite:.1f}, "
+                        f"target={target_pct:.1%})",
+                        score=c.composite,
+                        suggested_qty=buy_qty,
+                    )
+                )
             elif target_qty < current_qty:
                 sell_qty = current_qty - target_qty
                 # v2: skip if allocation difference is within dead band
@@ -363,12 +375,16 @@ class PortfolioManager:
                 planned_sell_value += proceeds
                 stats["sell_reduce"] += 1
                 logger.info(f"{base} → SELL {sell_qty} (~${proceeds:,.2f})")
-                signals.append(Signal(
-                    ticker=c.ticker, action="sell",
-                    reason=f"redistribution_reduce (score={c.composite:.1f}, "
-                           f"target={target_pct:.1%})",
-                    score=c.composite, suggested_qty=sell_qty,
-                ))
+                signals.append(
+                    Signal(
+                        ticker=c.ticker,
+                        action="sell",
+                        reason=f"redistribution_reduce (score={c.composite:.1f}, "
+                        f"target={target_pct:.1%})",
+                        score=c.composite,
+                        suggested_qty=sell_qty,
+                    )
+                )
             else:
                 stats["hold_in_band"] += 1
                 logger.info(f"{base} → hold (already at target)")
@@ -379,7 +395,16 @@ class PortfolioManager:
                 pos.ticker not in qualifying_tickers
                 and pos.ticker not in profit_sold_tickers
             ):
-                ticker_score = score_map.get(pos.ticker, 0)
+                # No fresh score this cycle (data fetch dropped this ticker) →
+                # defer the decision rather than treating absence as score=0.
+                if pos.ticker not in score_map:
+                    stats["skip_no_score"] += 1
+                    logger.info(
+                        f"[redistribute] {pos.ticker} no fresh score this cycle "
+                        f"→ skip: no_score (defer no_longer_qualifies decision)"
+                    )
+                    continue
+                ticker_score = score_map[pos.ticker]
                 live = alpaca_map.get(pos.ticker)
                 price = live["current_price"] if live else 0.0
                 pos_value = pos.qty * price
@@ -399,11 +424,15 @@ class PortfolioManager:
                     f"qty={pos.qty} (~${pos_value:,.2f}) → "
                     f"SELL: no_longer_qualifies (score<{sell_threshold})"
                 )
-                signals.append(Signal(
-                    ticker=pos.ticker, action="sell",
-                    reason="no_longer_qualifies",
-                    score=0, suggested_qty=pos.qty,
-                ))
+                signals.append(
+                    Signal(
+                        ticker=pos.ticker,
+                        action="sell",
+                        reason="no_longer_qualifies",
+                        score=0,
+                        suggested_qty=pos.qty,
+                    )
+                )
 
         rounding_gap = max(0.0, available_capital - planned_target)
         gap_pct = (rounding_gap / available_capital) if available_capital > 0 else 0.0
@@ -414,6 +443,7 @@ class PortfolioManager:
             f"sells={total_sells} (~${planned_sell_value:,.2f}) | "
             f"skip_dead_band={stats['skip_dead_band']} "
             f"skip_min_hold={stats['skip_min_hold']} "
+            f"skip_no_score={stats['skip_no_score']} "
             f"hold_in_band={stats['hold_in_band']} "
             f"held_above_sell_threshold={stats['held_above_sell_threshold']} | "
             f"available=${available_capital:,.2f} "
@@ -436,7 +466,14 @@ class PortfolioManager:
             if pos.ticker not in already_sold:
                 # v2: respect hysteresis — keep if score still above sell_threshold
                 if score_map and sell_threshold > 0:
-                    ticker_score = score_map.get(pos.ticker, 0)
+                    # No fresh score this cycle → defer rather than sell on absence
+                    if pos.ticker not in score_map:
+                        logger.info(
+                            f"[sell_non_qualifying] {pos.ticker} no fresh score "
+                            f"this cycle → skip"
+                        )
+                        continue
+                    ticker_score = score_map[pos.ticker]
                     if ticker_score >= sell_threshold:
                         continue
                 signals.append(

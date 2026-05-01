@@ -38,7 +38,7 @@ On startup, the scheduler runs pre-market prep once immediately (same as step 3A
 
 | Provider | Limit | Enforcement in code | Location |
 |----------|-------|-------------------|----------|
-| Alpaca | 200 req/min (free tier) | No explicit throttle — batch calls keep volume low | `core/alpaca_data.py` |
+| Alpaca | 200 req/min (free tier) | Symbols fetched in 25-ticker chunks (`CHUNK_SIZE`) with per-ticker retry for any silently-dropped symbols | `core/alpaca_data.py` |
 | Finnhub | 60 calls/min | Sliding window, capped at 55/min; sleeps when full | `core/finnhub_data.py:50` |
 | FMP | 250 req/day (free tier) | 24-hour disk cache (`data/fmp_cache.json`); only calls on miss | `core/fmp_data.py:56` |
 | yfinance | ~2 req/s (unofficial) | 0.5s min delay between calls + 1–2s retry backoff | `core/data_provider.py:22` |

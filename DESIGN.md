@@ -55,7 +55,7 @@ Foundation layer shared by all modules.
 - **database.py** — SQLite with WAL mode. Tables: `universe`, `scan_results`, `scores`, `positions`, `orders`, `price_snapshots`, `daily_holding_prices`, `portfolio_snapshots`, `fundamentals`. `daily_holding_prices` is upserted every rebalance cycle with each open Alpaca position's latest price; the last write of the day becomes that ticker's day-end close, used by the prior-close profit/loss triggers in PortfolioManager.
 - **logging_config.py** — Rotating file + console logging.
 - **exceptions.py** — Hierarchy: `AiTradingError` → `ConfigError`, `DataFetchError`, `BrokerError`, `OrderError`, `RiskLimitError`, `DatabaseError`.
-- **alpaca_data.py** — Alpaca market data provider: OHLCV bars and news in yfinance-compatible format. Does not support index tickers (^VIX, ^TNX) — those use yfinance directly.
+- **alpaca_data.py** — Alpaca market data provider: OHLCV bars and news in yfinance-compatible format. Bars are fetched in chunks of `CHUNK_SIZE` (25) symbols and any tickers missing from the chunked responses are retried individually, since Alpaca's batch endpoint silently drops a subset of symbols under load. Does not support index tickers (^VIX, ^TNX) — those use yfinance directly.
 - **finnhub_data.py** — Finnhub fundamentals provider (primary): EPS, BVPS, ROE, margins, growth, debt/equity, current ratio, FCF via `/stock/metric?metric=all`. Free tier: 60 req/min, no daily cap.
 - **fmp_data.py** — Financial Modeling Prep provider (fallback): ROE, margins, debt/equity, current ratio, FCF in yfinance-compatible format. Free tier: 250 req/day.
 - **data_provider.py** — Unified data layer: routes to Alpaca (OHLCV/news), Finnhub→FMP→yfinance (fundamentals), yfinance (fallback + index tickers).

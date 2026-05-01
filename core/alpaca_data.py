@@ -20,7 +20,7 @@ _news_client = None
 
 PERIOD_MAP = {
     "1d": timedelta(days=1),
-    "5d": timedelta(days=7),      # extra margin for weekends
+    "5d": timedelta(days=7),  # extra margin for weekends
     "1mo": timedelta(days=35),
     "3mo": timedelta(days=100),
     "6mo": timedelta(days=190),
@@ -28,11 +28,17 @@ PERIOD_MAP = {
     "2y": timedelta(days=740),
 }
 
+# Alpaca's batch bars endpoint silently drops a subset of symbols under load
+# (observed during market hours with multiple processes calling concurrently).
+# Smaller chunks bound the response size and eliminate the drops.
+CHUNK_SIZE = 25
+
 
 def _get_stock_client():
     global _stock_client
     if _stock_client is None:
         from alpaca.data.historical import StockHistoricalDataClient
+
         _stock_client = StockHistoricalDataClient(
             api_key=os.environ.get("ALPACA_API_KEY"),
             secret_key=os.environ.get("ALPACA_SECRET_KEY"),
@@ -44,6 +50,7 @@ def _get_news_client():
     global _news_client
     if _news_client is None:
         from alpaca.data.historical import NewsClient
+
         _news_client = NewsClient(
             api_key=os.environ.get("ALPACA_API_KEY"),
             secret_key=os.environ.get("ALPACA_SECRET_KEY"),
@@ -51,8 +58,54 @@ def _get_news_client():
     return _news_client
 
 
+def _bars_to_frames(bars_df: pd.DataFrame, tickers: list) -> dict:
+    """Convert Alpaca's MultiIndex BarSet df to {ticker: yf-format DataFrame}."""
+    if bars_df.empty:
+        return {}
+
+    rename = {
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+    }
+    bars_df = bars_df.rename(columns=rename)
+    keep_cols = ["Open", "High", "Low", "Close", "Volume"]
+    bars_df = bars_df[[c for c in keep_cols if c in bars_df.columns]]
+
+    symbols_present = set(bars_df.index.get_level_values("symbol").unique())
+    frames = {}
+    for ticker in tickers:
+        if ticker in symbols_present:
+            tdf = bars_df.xs(ticker, level="symbol").copy()
+            tdf.index = tdf.index.tz_localize(None)
+            tdf.index.name = "Date"
+            frames[ticker] = tdf
+    return frames
+
+
+def _fetch_chunk(tickers: list, start) -> dict:
+    """Fetch one chunk of tickers from Alpaca and return {ticker: DataFrame}."""
+    from alpaca.data.requests import StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame
+
+    request = StockBarsRequest(
+        symbol_or_symbols=tickers,
+        timeframe=TimeFrame.Day,
+        start=start,
+    )
+    bars = _get_stock_client().get_stock_bars(request)
+    return _bars_to_frames(bars.df, tickers)
+
+
 def alpaca_download(tickers, period="3mo", group_by=None, **kwargs) -> pd.DataFrame:
     """Download OHLCV data from Alpaca, returning yfinance-compatible DataFrame.
+
+    Symbols are fetched in chunks of CHUNK_SIZE; any tickers missing from the
+    chunked responses are retried individually, since Alpaca's batch endpoint
+    occasionally drops a subset under load (deterministic ~12-symbol drop
+    observed during market hours with three concurrent processes).
 
     Args:
         tickers: Single ticker string or list of tickers.
@@ -67,9 +120,6 @@ def alpaca_download(tickers, period="3mo", group_by=None, **kwargs) -> pd.DataFr
     Raises:
         ValueError: If any ticker is an index (starts with ^).
     """
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
-
     if isinstance(tickers, str):
         ticker_list = [tickers]
     else:
@@ -77,52 +127,46 @@ def alpaca_download(tickers, period="3mo", group_by=None, **kwargs) -> pd.DataFr
 
     # Index tickers not supported — signal caller to use yfinance
     if any(t.startswith("^") for t in ticker_list):
-        raise ValueError(f"Alpaca does not support index tickers: {[t for t in ticker_list if t.startswith('^')]}")
+        raise ValueError(
+            f"Alpaca does not support index tickers: {[t for t in ticker_list if t.startswith('^')]}"
+        )
 
     start = datetime.now() - PERIOD_MAP.get(period, timedelta(days=100))
 
-    request = StockBarsRequest(
-        symbol_or_symbols=ticker_list,
-        timeframe=TimeFrame.Day,
-        start=start,
-    )
-
-    bars = _get_stock_client().get_stock_bars(request)
-    df = bars.df
-
-    if df.empty:
-        return pd.DataFrame()
-
-    # Alpaca returns MultiIndex (symbol, timestamp) with lowercase columns.
-    # Convert to yfinance format.
-    rename = {"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"}
-    df = df.rename(columns=rename)
-    keep_cols = ["Open", "High", "Low", "Close", "Volume"]
-    df = df[[c for c in keep_cols if c in df.columns]]
-
-    if len(ticker_list) == 1 and group_by != "ticker":
-        # Single ticker: drop symbol level, keep timestamp as index
-        ticker = ticker_list[0]
-        if ticker in df.index.get_level_values("symbol"):
-            df = df.xs(ticker, level="symbol")
-        df.index = df.index.tz_localize(None)
-        df.index.name = "Date"
-        return df
-
-    # Multiple tickers: pivot to MultiIndex columns (ticker, field)
+    # Chunked batch fetch
     frames = {}
-    for ticker in ticker_list:
-        if ticker in df.index.get_level_values("symbol"):
-            tdf = df.xs(ticker, level="symbol").copy()
-            tdf.index = tdf.index.tz_localize(None)
-            tdf.index.name = "Date"
-            frames[ticker] = tdf
+    for i in range(0, len(ticker_list), CHUNK_SIZE):
+        chunk = ticker_list[i : i + CHUNK_SIZE]
+        try:
+            frames.update(_fetch_chunk(chunk, start))
+        except Exception as e:
+            logger.warning(f"Alpaca chunk fetch failed for {len(chunk)} symbols: {e}")
+
+    # Retry any missing tickers individually
+    missing = [t for t in ticker_list if t not in frames]
+    if missing:
+        logger.info(
+            f"Alpaca batch dropped {len(missing)}/{len(ticker_list)} tickers, retrying individually: "
+            f"{missing[:10]}{'...' if len(missing) > 10 else ''}"
+        )
+        for ticker in missing:
+            try:
+                retry = _fetch_chunk([ticker], start)
+                if ticker in retry:
+                    frames[ticker] = retry[ticker]
+            except Exception as e:
+                logger.warning(f"Alpaca individual retry failed for {ticker}: {e}")
+
+    # Single ticker without group_by="ticker": return flat DataFrame
+    if len(ticker_list) == 1 and group_by != "ticker":
+        return frames.get(ticker_list[0], pd.DataFrame())
 
     if not frames:
         return pd.DataFrame()
 
-    combined = pd.concat(frames, axis=1)
-    return combined
+    # Multi-ticker: pivot to MultiIndex columns (ticker, field), preserving request order
+    ordered = {t: frames[t] for t in ticker_list if t in frames}
+    return pd.concat(ordered, axis=1)
 
 
 def alpaca_news(ticker: str, limit: int = 20) -> list:
@@ -139,10 +183,14 @@ def alpaca_news(ticker: str, limit: int = 20) -> list:
     articles = news_set.data.get("news", []) if news_set.data else []
     result = []
     for article in articles:
-        result.append({
-            "title": article.headline,
-            "link": article.url,
-            "publisher": article.source,
-            "published": article.created_at.isoformat() if article.created_at else None,
-        })
+        result.append(
+            {
+                "title": article.headline,
+                "link": article.url,
+                "publisher": article.source,
+                "published": (
+                    article.created_at.isoformat() if article.created_at else None
+                ),
+            }
+        )
     return result
