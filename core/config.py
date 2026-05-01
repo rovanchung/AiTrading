@@ -179,10 +179,20 @@ def load_config(
         acct = accounts.get(version, {})
         if acct.get("database_path"):
             data.setdefault("database", {})["path"] = acct["database_path"]
-        # Merge all other account keys into trading section
+        # Merge all other account keys into trading section. Reserved keys
+        # (database_path, account_overrides) are structural, not trading params.
         trading = data.setdefault("trading", {})
+        reserved = {"database_path", "account_overrides"}
         for key, val in acct.items():
-            if key != "database_path":
+            if key not in reserved:
+                trading[key] = val
+
+        # Per-account override block (e.g. accounts.v4.account_overrides.v4_2)
+        # is merged on top of the version defaults when --account is set.
+        if account:
+            per_account = acct.get("account_overrides", {}) or {}
+            override = per_account.get(account.lower(), {}) or {}
+            for key, val in override.items():
                 trading[key] = val
 
     # Per-account DB override — must be unique per (version, account) so

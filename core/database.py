@@ -254,6 +254,60 @@ class Database:
         ).fetchall()
         return [self._row_to_position(r) for r in rows]
 
+    def reconcile_positions(self, alpaca_positions: list[dict]) -> dict:
+        """Sync local positions table to Alpaca's ground truth.
+
+        - Insert open rows for tickers Alpaca holds but the DB does not
+          (cost basis = avg_entry, entry_time = now since the true entry
+          time is unrecoverable).
+        - Update qty / entry_price on rows where they drift from Alpaca.
+        - Mark rows closed when Alpaca no longer holds the ticker; uses the
+          last-known entry_price as exit_price (true exit price is unknown
+          at this point, but pnl will be reconciled to ~0 — better than
+          letting the row persist as phantom-open).
+
+        Returns a counts dict for logging. Only touches rows with status='open'.
+        """
+        local_rows = self.conn.execute(
+            "SELECT id, ticker, qty, entry_price FROM positions WHERE status='open'"
+        ).fetchall()
+        local_by_ticker = {r["ticker"]: dict(r) for r in local_rows}
+        alpaca_by_ticker = {p["ticker"]: p for p in alpaca_positions}
+
+        inserted = updated = closed = 0
+        now = datetime.now()
+
+        # Insert / update
+        for ticker, ap in alpaca_by_ticker.items():
+            local = local_by_ticker.get(ticker)
+            if local is None:
+                sector = self.get_stock_sector(ticker)
+                self.conn.execute(
+                    """INSERT INTO positions
+                       (ticker, qty, entry_price, entry_time, status, sector)
+                       VALUES (?, ?, ?, ?, 'open', ?)""",
+                    (ticker, ap["qty"], ap["avg_entry"], now, sector),
+                )
+                inserted += 1
+            elif local["qty"] != ap["qty"] or abs(local["entry_price"] - ap["avg_entry"]) > 0.001:
+                self.conn.execute(
+                    "UPDATE positions SET qty=?, entry_price=? WHERE id=?",
+                    (ap["qty"], ap["avg_entry"], local["id"]),
+                )
+                updated += 1
+
+        # Close orphans (DB shows open, Alpaca doesn't hold it)
+        for ticker, local in local_by_ticker.items():
+            if ticker not in alpaca_by_ticker:
+                self.close_position(
+                    local["id"], local["entry_price"], "reconcile_orphan"
+                )
+                closed += 1
+
+        if inserted or updated or closed:
+            self.conn.commit()
+        return {"inserted": inserted, "updated": updated, "closed": closed}
+
     def update_position(self, pos_id: int, **kwargs):
         sets = ", ".join(f"{k} = ?" for k in kwargs)
         vals = list(kwargs.values()) + [pos_id]

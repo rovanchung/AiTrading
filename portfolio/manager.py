@@ -1,6 +1,7 @@
 """Portfolio manager — profit-based sells + score-proportional redistribution."""
 
 import logging
+from collections import Counter
 from datetime import datetime
 from typing import Optional
 
@@ -186,6 +187,17 @@ class PortfolioManager:
             sell_threshold = buy_threshold  # no hysteresis in v1
             dead_band_pct = 0.0
 
+        # Concentration caps (0 = disabled). Applied to NEW buys only:
+        # - max_pct_per_position: ceiling on a single name's allocation
+        # - max_sector_pct: ceiling on combined slots in one GICS sector
+        max_per_pos_pct = self.tc.get("max_pct_per_position", 0.0)
+        max_sector_pct = self.tc.get("max_sector_pct", 0.0)
+        max_positions = self.tc.get("max_positions", 10)
+        sector_counts = Counter(p.sector for p in positions if p.sector)
+        max_in_sector = (
+            int(max_positions * max_sector_pct) if max_sector_pct > 0 else None
+        )
+
         # Get tickers on cooldown from prior profit/loss sells
         cooldown_tickers = self.db.get_recently_profit_sold(cooldown_hours)
         # Also exclude tickers being sold this cycle
@@ -254,6 +266,13 @@ class PortfolioManager:
             target_pct = c.composite / total_score
             target_dollars = available_capital * target_pct
 
+            # Cap a single name at max_pct_per_position of total equity
+            if max_per_pos_pct > 0:
+                cap_dollars = portfolio_value * max_per_pos_pct
+                if target_dollars > cap_dollars:
+                    target_dollars = cap_dollars
+                    target_pct = cap_dollars / available_capital if available_capital > 0 else 0
+
             # Get current price
             live = alpaca_map.get(c.ticker)
             if live:
@@ -304,6 +323,21 @@ class PortfolioManager:
                         )
                         stats["skip_dead_band"] += 1
                         continue
+                # Sector cap on NEW positions only — top-ups to held names are
+                # already counted in the current sector tally.
+                if max_in_sector is not None and current_qty == 0:
+                    sector = self.db.get_stock_sector(c.ticker) or ""
+                    if sector and sector_counts.get(sector, 0) >= max_in_sector:
+                        logger.info(
+                            f"{base} sector={sector} "
+                            f"({sector_counts[sector]}/{max_in_sector}) → "
+                            f"skip: sector cap"
+                        )
+                        stats.setdefault("skip_sector_cap", 0)
+                        stats["skip_sector_cap"] += 1
+                        continue
+                    if sector:
+                        sector_counts[sector] += 1
                 cost = buy_qty * current_price
                 planned_buy_cost += cost
                 stats["buy"] += 1

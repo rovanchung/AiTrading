@@ -90,3 +90,11 @@ accounts:
     v2_profit_take_pct: 0.05      # same as v3: +5% profit target
     v2_loss_cut_pct: 0.03         # same as v3: -3% stop loss
     v2_min_hold_minutes: 0        # no hold time (like v1)
+    account_overrides:
+      # Per-Alpaca-account overrides (selected by --account <suffix>, lowercased).
+      # Merged on top of the v4 trading params above.
+      v4_2:
+        v2_sell_threshold: 55              # 58 → 55: less score-driven churn
+        v2_rebalance_dead_band_pct: 0.05   # 0.03 → 0.05: fewer micro-rebalances
+        max_sector_pct: 0.20               # cap any sector at 20% of slots (default 0.30)
+        max_pct_per_position: 0.05         # cap a single name at 5% of equity

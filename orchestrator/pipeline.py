@@ -628,13 +628,25 @@ class TradingPipeline:
             }
 
             account = self.broker.get_account()
-            positions = self.db.get_open_positions()
             alpaca_positions = self.broker.get_positions()
 
             # Record today's latest price for each open holding. The final
             # upsert of the day becomes that ticker's closing price, used by
             # prior-close-based profit/loss triggers in PortfolioManager.
             self.db.record_daily_holding_prices(alpaca_positions)
+
+            # Reconcile local positions table to Alpaca ground truth before
+            # decisions are made. Catches any drift caused by missed fills,
+            # external manual trades, or app restarts mid-execution.
+            recon = self.db.reconcile_positions(alpaca_positions)
+            if recon["inserted"] or recon["updated"] or recon["closed"]:
+                logger.info(
+                    f"Position reconcile: +{recon['inserted']} new, "
+                    f"~{recon['updated']} updated, "
+                    f"-{recon['closed']} closed (orphan)"
+                )
+
+            positions = self.db.get_open_positions()
 
             # Save portfolio snapshot
             peak = max(self.db.get_peak_value(), account["portfolio_value"])
