@@ -13,7 +13,11 @@ Commands:
     ./aitrade scan --analyze      # Full scoring analysis
     ./aitrade scan --tickers X Y  # Analyze specific tickers
     ./aitrade scan --top N        # Show top N results
-    ./aitrade setup-db            # Initialize or reset the database
+    ./aitrade setup-db            # Initialize the database (non-destructive)
+    ./aitrade reset-db            # Delete + re-init DB for active --version
+    ./aitrade reset-db --all      # Delete + re-init all per-version DBs
+    ./aitrade reset-db --yes      # Skip confirmation prompt
+    ./aitrade sync                # Reconcile local DB with Alpaca (positions + cash)
     ./aitrade install             # Install dependencies
     ./aitrade logs [main|txn|alerts]  # View logs
     ./aitrade db [positions|closed|orders|portfolio]  # Query database
@@ -256,8 +260,51 @@ def cmd_scan(args):
 
 
 def cmd_setup_db(_args):
-    """Initialize or reset the database."""
-    subprocess.run([PYTHON, os.path.join(PROJECT_ROOT, "setup_db.py")])
+    """Initialize the database (creates schema if missing; non-destructive)."""
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "setup_db.py")] + _version_args()
+    subprocess.run(cmd)
+
+
+def cmd_sync(_args):
+    """Reconcile local DB positions and cash with Alpaca."""
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "main.py"), "--sync"] + _version_args()
+    subprocess.run(cmd)
+
+
+def cmd_reset_db(args):
+    """Delete and re-initialize the local database for one version (or all).
+
+    Usage:
+        ./aitrade --version v1 reset-db    # reset v1
+        ./aitrade reset-db --all           # reset v1..v4
+        ./aitrade reset-db --yes           # skip confirmation
+    """
+    skip_confirm = "--yes" in args or "-y" in args
+    reset_all = "--all" in args
+
+    if reset_all:
+        target_label = "ALL per-version databases (v1..v4)"
+    elif ACTIVE_VERSION:
+        target_label = f"{ACTIVE_VERSION.upper()} database"
+    else:
+        print(f"  {YELLOW}No version selected. Pass --version vN, or use --all.{RESET}")
+        return
+
+    print(f"\n  {BOLD}This will delete and recreate:{RESET} {target_label}")
+
+    if not skip_confirm:
+        if not pick_yes_no("This permanently deletes local trade history. Continue?"):
+            print("  Cancelled.")
+            return
+
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "setup_db.py")]
+    if reset_all:
+        cmd.append("--reset-all")
+    else:
+        cmd += ["--reset"] + _version_args()
+    subprocess.run(cmd)
+
+    print(f"\n  {GREEN}Reset complete.{RESET}")
 
 
 def cmd_install_deps(_args):
@@ -565,6 +612,7 @@ def menu_main():
             {"label": "Run continuous", "desc": "Start trading scheduler",          "value": "run"},
             {"label": "Dashboard",      "desc": "Launch web UI",                    "value": "dashboard"},
             {"label": "Scan",           "desc": "Manual scan, show candidates",     "value": "scan"},
+            {"label": "Sync state",     "desc": "Reconcile local DB with Alpaca",   "value": "sync"},
             {"label": "Database",       "desc": "Query positions, orders, PnL",     "value": "db"},
             {"label": "Logs",           "desc": "View application or trade logs",   "value": "logs"},
             {"label": "Setup",          "desc": "Install deps, API keys, database", "value": "setup"},
@@ -589,6 +637,9 @@ def menu_main():
             cmd_dashboard([])
         elif choice == "scan":
             menu_scan()
+        elif choice == "sync":
+            show_command(_version_args() + ["sync"])
+            cmd_sync([])
         elif choice == "db":
             menu_db()
         elif choice == "logs":
@@ -682,11 +733,14 @@ def menu_logs():
 
 def menu_setup():
     """Setup submenu."""
+    ver = ACTIVE_VERSION.upper() if ACTIVE_VERSION else "default"
     choice = pick_menu("Setup", [
-        {"label": "Install dependencies", "desc": "pip install from requirements.txt", "value": "deps"},
-        {"label": "Configure API keys",   "desc": "Set up .env file",                  "value": "env"},
-        {"label": "Setup database",        "desc": "Initialize SQLite tables",          "value": "db"},
-        {"label": "All",                   "desc": "Install + configure + setup DB",    "value": "all"},
+        {"label": "Install dependencies", "desc": "pip install from requirements.txt",   "value": "deps"},
+        {"label": "Configure API keys",   "desc": "Set up .env file",                    "value": "env"},
+        {"label": "Setup database",       "desc": "Initialize SQLite tables",             "value": "db"},
+        {"label": "Reset database",       "desc": f"Delete + re-init DB for {ver}",      "value": "reset"},
+        {"label": "Reset ALL databases",  "desc": "Delete + re-init v1..v4",             "value": "reset-all"},
+        {"label": "All",                  "desc": "Install + configure + setup DB",      "value": "all"},
     ], back_label="Back")
 
     if choice is None:
@@ -698,8 +752,14 @@ def menu_setup():
     if choice in ("env", "all"):
         cmd_configure_env([])
     if choice in ("db", "all"):
-        show_command(["setup-db"])
+        show_command(["setup-db"] + _version_args())
         cmd_setup_db([])
+    if choice == "reset":
+        show_command(_version_args() + ["reset-db"])
+        cmd_reset_db([])
+    if choice == "reset-all":
+        show_command(["reset-db", "--all"])
+        cmd_reset_db(["--all"])
 
 
 # ── CLI dispatch ────────────────────────────────────────────────────────────
@@ -735,6 +795,8 @@ def cli_main():
         "dashboard": cmd_dashboard,
         "scan":      cmd_scan,
         "setup-db":  cmd_setup_db,
+        "reset-db":  cmd_reset_db,
+        "sync":      cmd_sync,
         "install":   cmd_install_deps,
         "logs":      cmd_logs,
         "db":        cmd_db,

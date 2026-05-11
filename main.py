@@ -26,6 +26,8 @@ def main():
     parser = argparse.ArgumentParser(description="AiTrading - Automated Stock Trading")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--dry-run", action="store_true", help="Analyze only, no trades")
+    parser.add_argument("--sync", action="store_true",
+                        help="Reconcile local DB positions/cash with Alpaca and exit")
     parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard")
     parser.add_argument("--port", type=int, default=5000, help="Dashboard port (default: 5000)")
     parser.add_argument("--no-macro", action="store_true", help="Disable macro overlay (use base config values)")
@@ -59,6 +61,31 @@ def main():
 
     db = Database(config.db_path)
     db.init_schema()
+
+    if args.sync:
+        broker = AlpacaClient(config)
+        alerts = AlertManager()
+        order_mgr = OrderManager(config, db, broker)
+        pipeline = TradingPipeline(config, db, broker, order_mgr, alerts)
+        summary = pipeline.sync_local_state()
+        if "error" in summary:
+            print(f"Sync failed: {summary['error']}")
+        else:
+            ver_label = f" [{args.version}]" if args.version else ""
+            print(f"\n=== SYNC{ver_label} ===")
+            print(f"  Cash:   ${summary['cash']:,.2f}")
+            print(f"  Equity: ${summary['equity']:,.2f}")
+            print(f"  Added:        {len(summary['added'])}")
+            for x in summary["added"]:
+                print(f"    + {x}")
+            print(f"  Closed:       {len(summary['closed'])}")
+            for x in summary["closed"]:
+                print(f"    - {x}")
+            print(f"  Qty updated:  {len(summary['qty_updated'])}")
+            for x in summary["qty_updated"]:
+                print(f"    ~ {x}")
+        db.close()
+        return
 
     if args.once or args.dry_run:
         # Single cycle mode

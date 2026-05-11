@@ -309,6 +309,84 @@ class TradingPipeline:
         timer.daemon = True
         timer.start()
 
+    def sync_local_state(self) -> dict:
+        """Reconcile local DB with Alpaca: positions and portfolio snapshot.
+
+        - Insert positions held on Alpaca that are missing locally
+        - Close local open positions that no longer exist on Alpaca
+        - Update qty when Alpaca and DB disagree
+        - Record a fresh portfolio snapshot
+
+        Synced-in positions use entry_price=avg_entry (from Alpaca) and
+        entry_time=now since the real entry timestamp is unknown. v2/v3
+        hold-window logic will therefore treat synced rows as just-bought.
+
+        Returns a summary dict; safe to call without the trade lock when
+        no other cycle is running (e.g. the standalone CLI command).
+        """
+        try:
+            alpaca_positions = self.broker.get_positions()
+            account = self.broker.get_account()
+        except Exception as e:
+            logger.error(f"sync_local_state: failed to fetch from Alpaca: {e}")
+            return {"error": str(e)}
+
+        db_by_ticker = {p.ticker: p for p in self.db.get_open_positions()}
+        alpaca_by_ticker = {p["ticker"]: p for p in alpaca_positions}
+
+        added, closed, qty_updated = [], [], []
+
+        for ticker, ap in alpaca_by_ticker.items():
+            if ticker in db_by_ticker:
+                continue
+            entry = ap["avg_entry"]
+            current = ap.get("current_price") or entry
+            pos = Position(
+                ticker=ticker,
+                qty=ap["qty"],
+                entry_price=entry,
+                entry_time=datetime.now(),
+                high_water_mark=max(entry, current),
+                status="open",
+                sector=self.db.get_stock_sector(ticker) or "",
+            )
+            self.db.save_position(pos)
+            added.append(f"{ticker} qty={ap['qty']} @ ${entry:.2f}")
+
+        for ticker, dp in db_by_ticker.items():
+            if ticker in alpaca_by_ticker:
+                continue
+            self.db.mark_position_synced_closed(dp.id)
+            closed.append(ticker)
+
+        for ticker, ap in alpaca_by_ticker.items():
+            dp = db_by_ticker.get(ticker)
+            if dp and dp.qty != ap["qty"]:
+                self.db.update_position(dp.id, qty=ap["qty"])
+                qty_updated.append(f"{ticker} {dp.qty}->{ap['qty']}")
+
+        peak = max(self.db.get_peak_value() or 0.0, account["portfolio_value"])
+        self.db.save_portfolio_snapshot(
+            account["portfolio_value"], account["cash"],
+            account["portfolio_value"] - account["cash"], peak,
+        )
+
+        summary = {
+            "added": added,
+            "closed": closed,
+            "qty_updated": qty_updated,
+            "cash": account["cash"],
+            "equity": account["portfolio_value"],
+        }
+        if added or closed or qty_updated:
+            logger.info(
+                f"sync_local_state: +{len(added)} -{len(closed)} ~{len(qty_updated)} "
+                f"(added={added} closed={closed} qty={qty_updated})"
+            )
+        else:
+            logger.debug("sync_local_state: already in sync")
+        return summary
+
     def _sync_pending_orders(self) -> dict[str, list[dict]]:
         """Sync pending orders: reconcile fills/cancels and return open orders.
 
@@ -464,6 +542,9 @@ class TradingPipeline:
         with self._trade_lock:
             # Sync pending orders from Alpaca before making decisions
             pending_orders = self._sync_pending_orders()
+            # Reconcile any drift between local positions and Alpaca's view
+            # (external trades, manual UI edits, post-reset hydration).
+            self.sync_local_state()
             pending_buy_tickers = {
                 t for t, orders in pending_orders.items()
                 if any("buy" in o["side"].lower() for o in orders)

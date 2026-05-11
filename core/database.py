@@ -243,6 +243,23 @@ class Database:
         )
         self.conn.commit()
 
+    def mark_position_synced_closed(self, pos_id: int):
+        """Close a local open position that no longer exists on Alpaca.
+
+        The real exit happened outside this system, so we don't know the
+        exit price. Skip PnL computation and trade_history to avoid
+        polluting performance stats with fabricated trades.
+        """
+        self.conn.execute(
+            """UPDATE positions
+               SET status = 'closed',
+                   exit_reason = 'synced_external',
+                   exit_time = ?
+               WHERE id = ?""",
+            (datetime.now(), pos_id),
+        )
+        self.conn.commit()
+
     def close_position(self, pos_id: int, exit_price: float, reason: str):
         entry_row = self.conn.execute(
             "SELECT * FROM positions WHERE id = ?", (pos_id,)
