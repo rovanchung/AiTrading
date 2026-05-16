@@ -3,6 +3,10 @@ trading:
   buy_threshold: 68
   profit_take_pct: 0.01        # v1: +1% from Alpaca avg cost -> sell
   loss_cut_pct: 0.005           # v1: -0.5% from Alpaca avg cost -> sell
+  # Prior-close triggers (v1). 0 = disabled. Compared against the last
+  # observed price on the most recent prior date in daily_holding_prices.
+  profit_take_vs_prior_close_pct: 0.0
+  loss_cut_vs_prior_close_pct: 0.0
   purchase_power_pct: 0.50      # 50% of portfolio value for redistribution
   cooldown_hours: 24             # hours before re-buying a profit/loss sold ticker
   paper_trading: true
@@ -11,6 +15,10 @@ trading:
   # v2 strategy parameters (ignored when strategy_version = v1):
   v2_profit_take_pct: 0.03      # +3% from Alpaca avg cost -> sell
   v2_loss_cut_pct: 0.02         # -2% from Alpaca avg cost -> sell
+  # Prior-close triggers (v2). 0 = disabled. Compared against the last
+  # observed price on the most recent prior date in daily_holding_prices.
+  v2_profit_take_vs_prior_close_pct: 0.0
+  v2_loss_cut_vs_prior_close_pct: 0.0
   v2_min_hold_minutes: 30       # don't sell until held for this long
   v2_sell_threshold: 58         # score must drop below this to trigger no_longer_qualifies
   v2_rebalance_dead_band_pct: 0.03  # skip redistribution trades unless allocation off by >3%

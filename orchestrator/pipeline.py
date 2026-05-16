@@ -150,7 +150,9 @@ class TradingPipeline:
         # Scan (or load from cache if another version just scanned)
         scored, data = self._scan_or_load_cache(scan_max_age=90)
         if scored is None:
-            logger.info(f"Pre-market prep complete, no candidates ({time.time() - t0:.1f}s)")
+            logger.info(
+                f"Pre-market prep complete, no candidates ({time.time() - t0:.1f}s)"
+            )
             return
 
         logger.info(
@@ -194,17 +196,23 @@ class TradingPipeline:
                 logger.info("--- Evaluating & executing ---")
                 self._atomic_evaluate_and_execute(scored, data)
 
-                logger.info(f"=== FULL TRADING CYCLE COMPLETE ({time.time() - t0:.1f}s) ===")
+                logger.info(
+                    f"=== FULL TRADING CYCLE COMPLETE ({time.time() - t0:.1f}s) ==="
+                )
                 return
 
             except Exception as e:
                 now = time.time()
                 if now >= deadline:
-                    logger.error(f"Full cycle failed after {attempt} attempts, deadline reached: {e}")
+                    logger.error(
+                        f"Full cycle failed after {attempt} attempts, deadline reached: {e}"
+                    )
                     self.alerts.order_failed("CYCLE", str(e))
                     return
                 wait = min(30, deadline - now)
-                logger.warning(f"Full cycle attempt {attempt} failed: {e}, retrying in {wait:.0f}s")
+                logger.warning(
+                    f"Full cycle attempt {attempt} failed: {e}, retrying in {wait:.0f}s"
+                )
                 time.sleep(wait)
 
     def _update_shortlist(self, scored):
@@ -218,7 +226,9 @@ class TradingPipeline:
         shortlist = list(dict.fromkeys(top_tickers + list(held_tickers)))
 
         self._shortlist = shortlist
-        logger.info(f"Shortlist updated: {len(shortlist)} tickers ({len(held_tickers)} held + top {shortlist_size})")
+        logger.info(
+            f"Shortlist updated: {len(shortlist)} tickers ({len(held_tickers)} held + top {shortlist_size})"
+        )
 
     def run_rerank_cycle(self):
         """Re-rank the cached shortlist and rebalance portfolio.
@@ -241,7 +251,9 @@ class TradingPipeline:
             cached = scan_cache.load_shortlist()
             if cached:
                 self._shortlist = cached
-                logger.info(f"Loaded shortlist from cache: {len(self._shortlist)} tickers")
+                logger.info(
+                    f"Loaded shortlist from cache: {len(self._shortlist)} tickers"
+                )
 
         if not self._shortlist:
             logger.warning("No shortlist cached, running full cycle instead")
@@ -261,13 +273,17 @@ class TradingPipeline:
                     scored, data = scan_cache.load()
                     if scored:
                         self._atomic_evaluate_and_execute(scored, data)
-                        logger.info(f"=== RE-RANK CYCLE COMPLETE (from cache, {time.time() - t0:.1f}s) ===")
+                        logger.info(
+                            f"=== RE-RANK CYCLE COMPLETE (from cache, {time.time() - t0:.1f}s) ==="
+                        )
                         return
                 logger.info("Waiting for scan lock...")
                 scored, data = self._wait_for_cache(max_age=30, timeout=60)
                 if scored:
                     self._atomic_evaluate_and_execute(scored, data)
-                    logger.info(f"=== RE-RANK CYCLE COMPLETE (waited, {time.time() - t0:.1f}s) ===")
+                    logger.info(
+                        f"=== RE-RANK CYCLE COMPLETE (waited, {time.time() - t0:.1f}s) ==="
+                    )
                 return
 
             try:
@@ -304,8 +320,12 @@ class TradingPipeline:
             self._atomic_evaluate_and_execute(scored, data)
             return
 
-        logger.info(f"Market opens in {delay:.0f}s, deferring execution to {open_str} ET")
-        timer = threading.Timer(delay, self._atomic_evaluate_and_execute, args=[scored, data])
+        logger.info(
+            f"Market opens in {delay:.0f}s, deferring execution to {open_str} ET"
+        )
+        timer = threading.Timer(
+            delay, self._atomic_evaluate_and_execute, args=[scored, data]
+        )
         timer.daemon = True
         timer.start()
 
@@ -367,8 +387,10 @@ class TradingPipeline:
 
         peak = max(self.db.get_peak_value() or 0.0, account["portfolio_value"])
         self.db.save_portfolio_snapshot(
-            account["portfolio_value"], account["cash"],
-            account["portfolio_value"] - account["cash"], peak,
+            account["portfolio_value"],
+            account["cash"],
+            account["portfolio_value"] - account["cash"],
+            peak,
         )
 
         summary = {
@@ -441,16 +463,18 @@ class TradingPipeline:
                     )
 
                 elif alpaca_status in ("canceled", "cancelled", "expired", "rejected"):
-                    self.db.update_order(
-                        db_order["id"], status="canceled"
-                    )
+                    self.db.update_order(db_order["id"], status="canceled")
                     logger.info(
                         f"Sell order for {db_order['ticker']} was {alpaca_status}, "
                         f"updated DB"
                     )
 
-                elif alpaca_status in ("new", "accepted", "pending_new",
-                                       "partially_filled"):
+                elif alpaca_status in (
+                    "new",
+                    "accepted",
+                    "pending_new",
+                    "partially_filled",
+                ):
                     pass  # still active, leave as-is
 
             except Exception as e:
@@ -506,9 +530,7 @@ class TradingPipeline:
                     )
 
                 elif alpaca_status in ("canceled", "cancelled", "expired", "rejected"):
-                    self.db.update_order(
-                        db_order["id"], status="canceled"
-                    )
+                    self.db.update_order(db_order["id"], status="canceled")
                     logger.info(
                         f"Buy order for {db_order['ticker']} was {alpaca_status}, "
                         f"updated DB"
@@ -522,11 +544,16 @@ class TradingPipeline:
                     f"for {db_order['ticker']}: {e}"
                 )
 
-    def _cancel_pending_orders_for(self, ticker: str, side: str,
-                                    pending_orders: dict[str, list[dict]]):
+    def _cancel_pending_orders_for(
+        self, ticker: str, side: str, pending_orders: dict[str, list[dict]]
+    ):
         """Cancel all pending orders for a ticker on a given side."""
         for order in pending_orders.get(ticker, []):
-            if order["side"].lower().replace("ordersid.", "").replace("orderside.", "") == side or side == "all":
+            if (
+                order["side"].lower().replace("ordersid.", "").replace("orderside.", "")
+                == side
+                or side == "all"
+            ):
                 try:
                     self.broker.cancel_order(order["order_id"])
                     logger.info(f"Cancelled pending {order['side']} for {ticker}")
@@ -546,11 +573,13 @@ class TradingPipeline:
             # (external trades, manual UI edits, post-reset hydration).
             self.sync_local_state()
             pending_buy_tickers = {
-                t for t, orders in pending_orders.items()
+                t
+                for t, orders in pending_orders.items()
                 if any("buy" in o["side"].lower() for o in orders)
             }
             pending_sell_tickers = {
-                t for t, orders in pending_orders.items()
+                t
+                for t, orders in pending_orders.items()
                 if any("sell" in o["side"].lower() for o in orders)
             }
 
@@ -558,11 +587,18 @@ class TradingPipeline:
             positions = self.db.get_open_positions()
             alpaca_positions = self.broker.get_positions()
 
+            # Record today's latest price for each open holding. The final
+            # upsert of the day becomes that ticker's closing price, used by
+            # prior-close-based profit/loss triggers in PortfolioManager.
+            self.db.record_daily_holding_prices(alpaca_positions)
+
             # Save portfolio snapshot
             peak = max(self.db.get_peak_value(), account["portfolio_value"])
             self.db.save_portfolio_snapshot(
-                account["portfolio_value"], account["cash"],
-                account["portfolio_value"] - account["cash"], peak
+                account["portfolio_value"],
+                account["cash"],
+                account["portfolio_value"] - account["cash"],
+                peak,
             )
 
             # Generate signals
@@ -580,10 +616,14 @@ class TradingPipeline:
                     logger.info(f"Skipping buy {s.ticker}: pending buy order exists")
                     continue
                 if s.action == "sell" and s.ticker in pending_buy_tickers:
-                    logger.info(f"Skipping sell {s.ticker}: only has pending buy, no filled position")
+                    logger.info(
+                        f"Skipping sell {s.ticker}: only has pending buy, no filled position"
+                    )
                     continue
                 if s.action == "sell" and s.ticker in pending_sell_tickers:
-                    logger.info(f"Skipping sell {s.ticker}: pending sell order already exists")
+                    logger.info(
+                        f"Skipping sell {s.ticker}: pending sell order already exists"
+                    )
                     continue
                 filtered.append(s)
 
@@ -684,7 +724,10 @@ class TradingPipeline:
         return scaled
 
     def _execute_signals(
-        self, signals, data: dict, positions: list[Position],
+        self,
+        signals,
+        data: dict,
+        positions: list[Position],
         pending_orders: dict[str, list[dict]] = None,
     ):
         """Execute a list of buy/sell signals. Caller must hold _trade_lock."""
@@ -694,7 +737,9 @@ class TradingPipeline:
         for signal in signals:
             try:
                 df = data.get(signal.ticker)
-                current_price = df["Close"].iloc[-1] if df is not None and not df.empty else 0
+                current_price = (
+                    df["Close"].iloc[-1] if df is not None and not df.empty else 0
+                )
 
                 if current_price <= 0:
                     logger.warning(f"No price data for {signal.ticker}, skipping")
@@ -703,7 +748,9 @@ class TradingPipeline:
                 # Cancel any pending buy orders before selling to avoid
                 # the buy filling after we've sold the position
                 if signal.action == "sell":
-                    self._cancel_pending_orders_for(signal.ticker, "buy", pending_orders)
+                    self._cancel_pending_orders_for(
+                        signal.ticker, "buy", pending_orders
+                    )
 
                 order = self.order_mgr.execute_signal(signal, current_price)
 
@@ -723,7 +770,9 @@ class TradingPipeline:
                                 f"(not found on Alpaca)"
                             )
                             self.db.close_position(
-                                existing.id, existing.entry_price, "stale_position_cleanup"
+                                existing.id,
+                                existing.entry_price,
+                                "stale_position_cleanup",
                             )
                     continue
 
@@ -750,7 +799,9 @@ class TradingPipeline:
                             f"BUY  | {signal.ticker} | qty={order.qty} | "
                             f"price={fill_price:.2f} | reason={signal.reason}"
                         )
-                        self.alerts.position_opened(signal.ticker, order.qty, fill_price)
+                        self.alerts.position_opened(
+                            signal.ticker, order.qty, fill_price
+                        )
 
                 elif signal.action == "sell":
                     existing = pos_map.get(signal.ticker)
@@ -758,22 +809,29 @@ class TradingPipeline:
                         sold_qty = min(signal.suggested_qty, existing.qty)
                         if sold_qty >= existing.qty:
                             # Full sell — close DB position
-                            self.db.close_position(existing.id, fill_price, signal.reason)
+                            self.db.close_position(
+                                existing.id, fill_price, signal.reason
+                            )
                         else:
                             # Partial sell — reduce qty in DB
                             self.db.update_position(
                                 existing.id, qty=existing.qty - sold_qty
                             )
                         pnl = (fill_price - existing.entry_price) * sold_qty
-                        pnl_pct = ((fill_price - existing.entry_price) / existing.entry_price) * 100
+                        pnl_pct = (
+                            (fill_price - existing.entry_price) / existing.entry_price
+                        ) * 100
                         txn_logger.info(
                             f"SELL | {signal.ticker} | qty={sold_qty} | "
                             f"entry={existing.entry_price:.2f} | exit={fill_price:.2f} | "
                             f"pnl=${pnl:.2f} ({pnl_pct:+.1f}%) | reason={signal.reason}"
                         )
                         self.alerts.position_closed(
-                            signal.ticker, sold_qty, fill_price,
-                            signal.reason, pnl,
+                            signal.ticker,
+                            sold_qty,
+                            fill_price,
+                            signal.reason,
+                            pnl,
                         )
 
             except Exception as e:

@@ -52,7 +52,7 @@ Foundation layer shared by all modules.
 
 - **config.py** — Loads `config.yaml` + `.env`. Provides `Config` object with dot-notation access (`config.get("trading.max_positions")`). `load_config(version=)` merges per-account overrides (database path, strategy version, trading params) from the `accounts:` section. `activate_version()` swaps Alpaca credentials for the selected account.
 - **models.py** — Dataclasses: `Stock`, `ScoreResult`, `Position`, `Order`, `Signal`.
-- **database.py** — SQLite with WAL mode. Tables: `universe`, `scan_results`, `scores`, `positions`, `orders`, `price_snapshots`, `portfolio_snapshots`, `fundamentals`.
+- **database.py** — SQLite with WAL mode. Tables: `universe`, `scan_results`, `scores`, `positions`, `orders`, `price_snapshots`, `daily_holding_prices`, `portfolio_snapshots`, `fundamentals`. `daily_holding_prices` is upserted every rebalance cycle with each open Alpaca position's latest price; the last write of the day becomes that ticker's day-end close, used by the prior-close profit/loss triggers in PortfolioManager.
 - **logging_config.py** — Rotating file + console logging.
 - **exceptions.py** — Hierarchy: `AiTradingError` → `ConfigError`, `DataFetchError`, `BrokerError`, `OrderError`, `RiskLimitError`, `DatabaseError`.
 - **alpaca_data.py** — Alpaca market data provider: OHLCV bars and news in yfinance-compatible format. Does not support index tickers (^VIX, ^TNX) — those use yfinance directly.

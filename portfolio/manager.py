@@ -70,8 +70,12 @@ class PortfolioManager:
 
         # --- STEP 2: Score-based redistribution ---
         redistribution_signals = self._redistribute(
-            ranked_candidates, positions, alpaca_map,
-            portfolio_value, data, profit_sold_tickers,
+            ranked_candidates,
+            positions,
+            alpaca_map,
+            portfolio_value,
+            data,
+            profit_sold_tickers,
         )
         signals.extend(redistribution_signals)
 
@@ -92,11 +96,17 @@ class PortfolioManager:
         if self._is_v2:
             profit_take = self.tc.get("v2_profit_take_pct", 0.03)
             loss_cut = self.tc.get("v2_loss_cut_pct", 0.02)
+            profit_take_prior = self.tc.get("v2_profit_take_vs_prior_close_pct", 0.0)
+            loss_cut_prior = self.tc.get("v2_loss_cut_vs_prior_close_pct", 0.0)
             min_hold_minutes = self.tc.get("v2_min_hold_minutes", 30)
         else:
             profit_take = self.tc.get("profit_take_pct", 0.01)
             loss_cut = self.tc.get("loss_cut_pct", 0.005)
+            profit_take_prior = self.tc.get("profit_take_vs_prior_close_pct", 0.0)
+            loss_cut_prior = self.tc.get("loss_cut_vs_prior_close_pct", 0.0)
             min_hold_minutes = 0
+
+        prior_close_enabled = profit_take_prior > 0 or loss_cut_prior > 0
 
         signals = []
         sold_tickers = set()
@@ -118,20 +128,35 @@ class PortfolioManager:
                 continue
 
             pnl_pct = (current_price - avg_entry) / avg_entry
+            sell_reason: Optional[str] = None
 
             if pnl_pct >= profit_take:
-                signals.append(Signal(
-                    ticker=pos.ticker, action="sell",
-                    reason=f"profit_take ({pnl_pct:+.2%})",
-                    score=0, suggested_qty=pos.qty,
-                ))
-                sold_tickers.add(pos.ticker)
+                sell_reason = f"profit_take ({pnl_pct:+.2%})"
             elif pnl_pct <= -loss_cut:
-                signals.append(Signal(
-                    ticker=pos.ticker, action="sell",
-                    reason=f"loss_cut ({pnl_pct:+.2%})",
-                    score=0, suggested_qty=pos.qty,
-                ))
+                sell_reason = f"loss_cut ({pnl_pct:+.2%})"
+
+            # Prior-close triggers — only checked when avg-cost rules didn't
+            # already fire, so existing behavior is unchanged when the new
+            # configs stay at 0.
+            if sell_reason is None and prior_close_enabled:
+                prior_close = self.db.get_prior_close(pos.ticker)
+                if prior_close and prior_close > 0:
+                    prior_pct = (current_price - prior_close) / prior_close
+                    if profit_take_prior > 0 and prior_pct >= profit_take_prior:
+                        sell_reason = f"profit_take_prior_close ({prior_pct:+.2%})"
+                    elif loss_cut_prior > 0 and prior_pct <= -loss_cut_prior:
+                        sell_reason = f"loss_cut_prior_close ({prior_pct:+.2%})"
+
+            if sell_reason:
+                signals.append(
+                    Signal(
+                        ticker=pos.ticker,
+                        action="sell",
+                        reason=sell_reason,
+                        score=0,
+                        suggested_qty=pos.qty,
+                    )
+                )
                 sold_tickers.add(pos.ticker)
 
         return signals, sold_tickers
@@ -175,7 +200,8 @@ class PortfolioManager:
 
         # Filter qualifying candidates (for buys: must meet buy_threshold)
         qualifying = [
-            c for c in candidates
+            c
+            for c in candidates
             if c.composite >= buy_threshold and c.ticker not in excluded
         ]
 
@@ -183,8 +209,11 @@ class PortfolioManager:
             # Sell all held positions that aren't being sold in step 1
             # v2: respect sell_threshold hysteresis
             return self._sell_non_qualifying(
-                positions, profit_sold_tickers, score_map,
-                sell_threshold, min_hold_minutes,
+                positions,
+                profit_sold_tickers,
+                score_map,
+                sell_threshold,
+                min_hold_minutes,
             )
 
         # Calculate proportional allocation
@@ -232,15 +261,21 @@ class PortfolioManager:
                     # v2: skip if allocation difference is within dead band
                     if dead_band_pct > 0 and current_qty > 0:
                         current_dollars = current_qty * current_price
-                        alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
+                        alloc_diff = (
+                            abs(target_dollars - current_dollars) / portfolio_value
+                        )
                         if alloc_diff <= dead_band_pct:
                             continue
-                    signals.append(Signal(
-                        ticker=c.ticker, action="buy",
-                        reason=f"redistribution (score={c.composite:.1f}, "
-                               f"target={target_pct:.1%})",
-                        score=c.composite, suggested_qty=buy_qty,
-                    ))
+                    signals.append(
+                        Signal(
+                            ticker=c.ticker,
+                            action="buy",
+                            reason=f"redistribution (score={c.composite:.1f}, "
+                            f"target={target_pct:.1%})",
+                            score=c.composite,
+                            suggested_qty=buy_qty,
+                        )
+                    )
             elif target_qty < current_qty:
                 # Sell excess — check dead band and min hold
                 sell_qty = current_qty - target_qty
@@ -248,22 +283,30 @@ class PortfolioManager:
                     # v2: skip if allocation difference is within dead band
                     if dead_band_pct > 0:
                         current_dollars = current_qty * current_price
-                        alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
+                        alloc_diff = (
+                            abs(target_dollars - current_dollars) / portfolio_value
+                        )
                         if alloc_diff <= dead_band_pct:
                             continue
                     # v2: respect min hold time for redistribution sells too
                     if min_hold_minutes > 0:
                         entry_time = pos_entry_map.get(c.ticker)
                         if entry_time:
-                            held_minutes = (datetime.now() - entry_time).total_seconds() / 60
+                            held_minutes = (
+                                datetime.now() - entry_time
+                            ).total_seconds() / 60
                             if held_minutes < min_hold_minutes:
                                 continue
-                    signals.append(Signal(
-                        ticker=c.ticker, action="sell",
-                        reason=f"redistribution_reduce (score={c.composite:.1f}, "
-                               f"target={target_pct:.1%})",
-                        score=c.composite, suggested_qty=sell_qty,
-                    ))
+                    signals.append(
+                        Signal(
+                            ticker=c.ticker,
+                            action="sell",
+                            reason=f"redistribution_reduce (score={c.composite:.1f}, "
+                            f"target={target_pct:.1%})",
+                            score=c.composite,
+                            suggested_qty=sell_qty,
+                        )
+                    )
 
         # Sell positions that no longer qualify
         for pos in positions:
@@ -277,19 +320,27 @@ class PortfolioManager:
                     continue
                 # v2: respect min hold time
                 if min_hold_minutes > 0 and pos.entry_time:
-                    held_minutes = (datetime.now() - pos.entry_time).total_seconds() / 60
+                    held_minutes = (
+                        datetime.now() - pos.entry_time
+                    ).total_seconds() / 60
                     if held_minutes < min_hold_minutes:
                         continue
-                signals.append(Signal(
-                    ticker=pos.ticker, action="sell",
-                    reason="no_longer_qualifies",
-                    score=0, suggested_qty=pos.qty,
-                ))
+                signals.append(
+                    Signal(
+                        ticker=pos.ticker,
+                        action="sell",
+                        reason="no_longer_qualifies",
+                        score=0,
+                        suggested_qty=pos.qty,
+                    )
+                )
 
         return signals
 
     def _sell_non_qualifying(
-        self, positions: list[Position], already_sold: set[str],
+        self,
+        positions: list[Position],
+        already_sold: set[str],
         score_map: dict[str, float] = None,
         sell_threshold: float = 0,
         min_hold_minutes: int = 0,
@@ -305,12 +356,18 @@ class PortfolioManager:
                         continue
                 # v2: respect min hold time
                 if min_hold_minutes > 0 and pos.entry_time:
-                    held_minutes = (datetime.now() - pos.entry_time).total_seconds() / 60
+                    held_minutes = (
+                        datetime.now() - pos.entry_time
+                    ).total_seconds() / 60
                     if held_minutes < min_hold_minutes:
                         continue
-                signals.append(Signal(
-                    ticker=pos.ticker, action="sell",
-                    reason="no_longer_qualifies",
-                    score=0, suggested_qty=pos.qty,
-                ))
+                signals.append(
+                    Signal(
+                        ticker=pos.ticker,
+                        action="sell",
+                        reason="no_longer_qualifies",
+                        score=0,
+                        suggested_qty=pos.qty,
+                    )
+                )
         return signals

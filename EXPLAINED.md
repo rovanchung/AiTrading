@@ -199,10 +199,14 @@ The system runs four strategy versions (V1–V4) on separate Alpaca accounts sim
 
 ### Step 1: Profit-Based Sells (checked every 1 min)
 ```
-IF P&L ≥ +profit_target from avg cost     → SELL (profit take)
-IF P&L ≤ -loss_cut from avg cost          → SELL (loss cut)
-IF held < min_hold_time                   → SKIP (v2-strategy only)
+IF P&L ≥ +profit_target from avg cost                     → SELL (profit take)
+IF P&L ≤ -loss_cut from avg cost                          → SELL (loss cut)
+IF move ≥ +profit_target_prior from yesterday's close     → SELL (profit take vs prior close)
+IF move ≤ -loss_cut_prior from yesterday's close          → SELL (loss cut vs prior close)
+IF held < min_hold_time                                   → SKIP (v2-strategy only)
 ```
+
+The prior-close triggers compare today's price to the last price recorded for that ticker on the most recent prior calendar date (stored in `daily_holding_prices`, upserted every cycle). They are disabled by default (config keys default to 0) and run independently of the avg-cost rules.
 
 | Version | Profit target | Loss cut | Min hold |
 |---------|--------------|----------|----------|

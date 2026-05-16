@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
     snapshot_time TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS daily_holding_prices (
+    ticker TEXT NOT NULL,
+    date TEXT NOT NULL,
+    last_price REAL NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    PRIMARY KEY (ticker, date)
+);
+
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_time TIMESTAMP,
@@ -187,9 +195,14 @@ class Database:
                 momentum_score, sentiment_score, composite_score, details)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                score.ticker, score.scored_at, score.technical,
-                score.fundamental, score.momentum, score.sentiment,
-                score.composite, json.dumps(score.details),
+                score.ticker,
+                score.scored_at,
+                score.technical,
+                score.fundamental,
+                score.momentum,
+                score.sentiment,
+                score.composite,
+                json.dumps(score.details),
             ),
         )
         self.conn.commit()
@@ -221,9 +234,15 @@ class Database:
                 high_water_mark, status, sector)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                pos.ticker, pos.qty, pos.entry_price, pos.entry_time,
-                pos.stop_loss, pos.take_profit, pos.high_water_mark,
-                pos.status, pos.sector,
+                pos.ticker,
+                pos.qty,
+                pos.entry_price,
+                pos.entry_time,
+                pos.stop_loss,
+                pos.take_profit,
+                pos.high_water_mark,
+                pos.status,
+                pos.sector,
             ),
         )
         self.conn.commit()
@@ -238,9 +257,7 @@ class Database:
     def update_position(self, pos_id: int, **kwargs):
         sets = ", ".join(f"{k} = ?" for k in kwargs)
         vals = list(kwargs.values()) + [pos_id]
-        self.conn.execute(
-            f"UPDATE positions SET {sets} WHERE id = ?", vals
-        )
+        self.conn.execute(f"UPDATE positions SET {sets} WHERE id = ?", vals)
         self.conn.commit()
 
     def mark_position_synced_closed(self, pos_id: int):
@@ -272,18 +289,36 @@ class Database:
             (exit_price, now, reason, pnl, pos_id),
         )
         # Record in trade_history
-        entry_time = datetime.fromisoformat(entry_row["entry_time"]) if entry_row["entry_time"] else now
+        entry_time = (
+            datetime.fromisoformat(entry_row["entry_time"])
+            if entry_row["entry_time"]
+            else now
+        )
         hold_minutes = (now - entry_time).total_seconds() / 60
-        pnl_pct = ((exit_price - entry_row["entry_price"]) / entry_row["entry_price"] * 100) if entry_row["entry_price"] > 0 else 0
+        pnl_pct = (
+            ((exit_price - entry_row["entry_price"]) / entry_row["entry_price"] * 100)
+            if entry_row["entry_price"] > 0
+            else 0
+        )
         self.conn.execute(
             """INSERT INTO trade_history
                (ticker, qty, entry_price, entry_time, exit_price, exit_time,
                 pnl, pnl_pct, hold_duration_minutes, exit_reason, sector, position_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (entry_row["ticker"], entry_row["qty"], entry_row["entry_price"],
-             entry_row["entry_time"], exit_price, now,
-             pnl, round(pnl_pct, 2), round(hold_minutes, 1),
-             reason, entry_row["sector"], pos_id),
+            (
+                entry_row["ticker"],
+                entry_row["qty"],
+                entry_row["entry_price"],
+                entry_row["entry_time"],
+                exit_price,
+                now,
+                pnl,
+                round(pnl_pct, 2),
+                round(hold_minutes, 1),
+                reason,
+                entry_row["sector"],
+                pos_id,
+            ),
         )
         self.conn.commit()
 
@@ -293,9 +328,13 @@ class Database:
             ticker=row["ticker"],
             qty=row["qty"],
             entry_price=row["entry_price"],
-            entry_time=datetime.fromisoformat(row["entry_time"]) if row["entry_time"] else None,
+            entry_time=(
+                datetime.fromisoformat(row["entry_time"]) if row["entry_time"] else None
+            ),
             exit_price=row["exit_price"],
-            exit_time=datetime.fromisoformat(row["exit_time"]) if row["exit_time"] else None,
+            exit_time=(
+                datetime.fromisoformat(row["exit_time"]) if row["exit_time"] else None
+            ),
             stop_loss=row["stop_loss"],
             take_profit=row["take_profit"],
             high_water_mark=row["high_water_mark"],
@@ -329,20 +368,37 @@ class Database:
 
     # --- Fundamentals ---
     _FUNDAMENTALS_COLUMNS = {
-        "eps_ttm", "eps_annual", "book_value_per_share_quarterly",
-        "book_value_per_share_annual", "earnings_growth_ttm", "earnings_growth_5y",
-        "roe_ttm", "roe_annual", "net_margin_ttm", "gross_margin_ttm",
-        "operating_margin_ttm", "revenue_growth_ttm_yoy", "revenue_growth_3y",
-        "revenue_growth_5y", "current_ratio_quarterly", "current_ratio_annual",
-        "debt_to_equity_annual", "free_cash_flow_ttm", "fcf_per_share_ttm",
+        "eps_ttm",
+        "eps_annual",
+        "book_value_per_share_quarterly",
+        "book_value_per_share_annual",
+        "earnings_growth_ttm",
+        "earnings_growth_5y",
+        "roe_ttm",
+        "roe_annual",
+        "net_margin_ttm",
+        "gross_margin_ttm",
+        "operating_margin_ttm",
+        "revenue_growth_ttm_yoy",
+        "revenue_growth_3y",
+        "revenue_growth_5y",
+        "current_ratio_quarterly",
+        "current_ratio_annual",
+        "debt_to_equity_annual",
+        "free_cash_flow_ttm",
+        "fcf_per_share_ttm",
     }
 
-    def upsert_fundamentals(self, ticker: str, data: dict, provider: str,
-                            raw_json: str = ""):
+    def upsert_fundamentals(
+        self, ticker: str, data: dict, provider: str, raw_json: str = ""
+    ):
         """Insert or update fundamental data for a ticker."""
         # Filter to valid columns only
-        filtered = {k: v for k, v in data.items()
-                    if k in self._FUNDAMENTALS_COLUMNS and v is not None}
+        filtered = {
+            k: v
+            for k, v in data.items()
+            if k in self._FUNDAMENTALS_COLUMNS and v is not None
+        }
         if not filtered:
             return
 
@@ -386,9 +442,16 @@ class Database:
                 status, submitted_at, filled_at, filled_price, error_message)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                order.alpaca_order_id, order.ticker, order.side, order.qty,
-                order.order_type, order.limit_price, order.status,
-                order.submitted_at, order.filled_at, order.filled_price,
+                order.alpaca_order_id,
+                order.ticker,
+                order.side,
+                order.qty,
+                order.order_type,
+                order.limit_price,
+                order.status,
+                order.submitted_at,
+                order.filled_at,
+                order.filled_price,
                 order.error_message,
             ),
         )
@@ -398,9 +461,7 @@ class Database:
     def update_order(self, order_id: int, **kwargs):
         sets = ", ".join(f"{k} = ?" for k in kwargs)
         vals = list(kwargs.values()) + [order_id]
-        self.conn.execute(
-            f"UPDATE orders SET {sets} WHERE id = ?", vals
-        )
+        self.conn.execute(f"UPDATE orders SET {sets} WHERE id = ?", vals)
         self.conn.commit()
 
     def get_pending_buy_orders(self) -> list[dict]:
@@ -418,20 +479,19 @@ class Database:
 
     def get_pending_sell_orders(self) -> list[dict]:
         """Get sell orders that haven't been filled or failed yet."""
-        rows = self.conn.execute(
-            """SELECT id, alpaca_order_id, ticker, qty, status
+        rows = self.conn.execute("""SELECT id, alpaca_order_id, ticker, qty, status
                FROM orders
                WHERE side = 'sell'
                  AND status NOT IN ('filled', 'failed', 'canceled', 'cancelled')
                  AND alpaca_order_id IS NOT NULL
                  AND alpaca_order_id != ''
-               ORDER BY submitted_at DESC"""
-        ).fetchall()
+               ORDER BY submitted_at DESC""").fetchall()
         return [dict(r) for r in rows]
 
     # --- Portfolio Snapshots ---
-    def save_portfolio_snapshot(self, total_value: float, cash: float,
-                                positions_value: float, peak_value: float):
+    def save_portfolio_snapshot(
+        self, total_value: float, cash: float, positions_value: float, peak_value: float
+    ):
         self.conn.execute(
             """INSERT INTO portfolio_snapshots
                (snapshot_time, total_value, cash, positions_value, peak_value)
@@ -453,3 +513,48 @@ class Database:
             (ticker, price, datetime.now()),
         )
         self.conn.commit()
+
+    # --- Daily Holding Prices ---
+    def record_daily_holding_prices(self, alpaca_positions: list[dict]):
+        """Upsert today's last observed price for every open Alpaca position.
+
+        Called every rebalance cycle; the final upsert of the day becomes the
+        day's closing price for the ticker. Used by prior-close profit/loss
+        comparisons in PortfolioManager.
+        """
+        if not alpaca_positions:
+            return
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        rows = []
+        for p in alpaca_positions:
+            price = p.get("current_price")
+            ticker = p.get("ticker")
+            if not ticker or price is None or price <= 0:
+                continue
+            rows.append((ticker, today, float(price), now))
+        if not rows:
+            return
+        self.conn.executemany(
+            """INSERT INTO daily_holding_prices (ticker, date, last_price, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 last_price = excluded.last_price,
+                 updated_at = excluded.updated_at""",
+            rows,
+        )
+        self.conn.commit()
+
+    def get_prior_close(self, ticker: str) -> Optional[float]:
+        """Return the most recent recorded last_price for ticker on a date
+        before today. None if no such record exists."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        row = self.conn.execute(
+            """SELECT last_price FROM daily_holding_prices
+               WHERE ticker = ? AND date < ?
+               ORDER BY date DESC LIMIT 1""",
+            (ticker, today),
+        ).fetchone()
+        if not row or row["last_price"] is None:
+            return None
+        return float(row["last_price"])
