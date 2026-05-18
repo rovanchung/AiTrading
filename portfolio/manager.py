@@ -182,11 +182,9 @@ class PortfolioManager:
         if self._is_v2:
             sell_threshold = self.tc.get("v2_sell_threshold", 55)
             dead_band_pct = self.tc.get("v2_rebalance_dead_band_pct", 0.03)
-            min_hold_minutes = self.tc.get("v2_min_hold_minutes", 30)
         else:
             sell_threshold = buy_threshold  # no hysteresis in v1
             dead_band_pct = 0.0
-            min_hold_minutes = 0
 
         # Get tickers on cooldown from prior profit/loss sells
         cooldown_tickers = self.db.get_recently_profit_sold(cooldown_hours)
@@ -213,7 +211,6 @@ class PortfolioManager:
                 profit_sold_tickers,
                 score_map,
                 sell_threshold,
-                min_hold_minutes,
             )
 
         # Calculate proportional allocation
@@ -229,9 +226,6 @@ class PortfolioManager:
 
         qualifying_tickers = {c.ticker for c in qualifying}
         signals = []
-
-        # Build position entry-time lookup for min-hold check
-        pos_entry_map = {p.ticker: p.entry_time for p in positions}
 
         # Generate signals to reach target allocation
         for c in qualifying:
@@ -277,7 +271,7 @@ class PortfolioManager:
                         )
                     )
             elif target_qty < current_qty:
-                # Sell excess — check dead band and min hold
+                # Sell excess — check dead band
                 sell_qty = current_qty - target_qty
                 if sell_qty > 0:
                     # v2: skip if allocation difference is within dead band
@@ -288,15 +282,6 @@ class PortfolioManager:
                         )
                         if alloc_diff <= dead_band_pct:
                             continue
-                    # v2: respect min hold time for redistribution sells too
-                    if min_hold_minutes > 0:
-                        entry_time = pos_entry_map.get(c.ticker)
-                        if entry_time:
-                            held_minutes = (
-                                datetime.now() - entry_time
-                            ).total_seconds() / 60
-                            if held_minutes < min_hold_minutes:
-                                continue
                     signals.append(
                         Signal(
                             ticker=c.ticker,
@@ -318,13 +303,6 @@ class PortfolioManager:
                 # v2: only sell if score dropped below sell_threshold (hysteresis)
                 if ticker_score >= sell_threshold:
                     continue
-                # v2: respect min hold time
-                if min_hold_minutes > 0 and pos.entry_time:
-                    held_minutes = (
-                        datetime.now() - pos.entry_time
-                    ).total_seconds() / 60
-                    if held_minutes < min_hold_minutes:
-                        continue
                 signals.append(
                     Signal(
                         ticker=pos.ticker,
@@ -343,7 +321,6 @@ class PortfolioManager:
         already_sold: set[str],
         score_map: dict[str, float] = None,
         sell_threshold: float = 0,
-        min_hold_minutes: int = 0,
     ) -> list[Signal]:
         """Sell all held positions that aren't already being sold."""
         signals = []
@@ -353,13 +330,6 @@ class PortfolioManager:
                 if score_map and sell_threshold > 0:
                     ticker_score = score_map.get(pos.ticker, 0)
                     if ticker_score >= sell_threshold:
-                        continue
-                # v2: respect min hold time
-                if min_hold_minutes > 0 and pos.entry_time:
-                    held_minutes = (
-                        datetime.now() - pos.entry_time
-                    ).total_seconds() / 60
-                    if held_minutes < min_hold_minutes:
                         continue
                 signals.append(
                     Signal(
