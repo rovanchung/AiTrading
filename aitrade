@@ -26,18 +26,25 @@ Commands:
 
 import os
 import sys
+
+# Re-exec under the project's venv python if we're running under a different
+# interpreter (the shebang resolves to /usr/bin/env python3, which usually
+# lacks yaml/alpaca/etc).
+_VENV_PY = os.environ.get("PYTHON", os.path.expanduser("~/python_env/torch-env/bin/python3"))
+if os.path.realpath(sys.executable) != os.path.realpath(_VENV_PY) and os.path.isfile(_VENV_PY):
+    os.execv(_VENV_PY, [_VENV_PY, os.path.abspath(__file__)] + sys.argv[1:])
+
 import subprocess
 import shutil
 import signal
 import sqlite3
-import textwrap
 
 # Resolve project root (where this script lives)
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 os.chdir(PROJECT_ROOT)
 sys.path.insert(0, PROJECT_ROOT)
 
-PYTHON = os.environ.get("PYTHON", os.path.expanduser("~/python_env/torch-env/bin/python3"))
+PYTHON = _VENV_PY
 PIP = os.environ.get("PIP", os.path.expanduser("~/python_env/torch-env/bin/pip"))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "trading.db")
 
@@ -487,151 +494,178 @@ def cmd_db(args):
     print()
 
 
+def _load_config():
+    import yaml
+    with open(os.path.join(PROJECT_ROOT, "config.yaml")) as f:
+        return yaml.safe_load(f)
+
+
+def _strategy_table_lines(active_version=None):
+    """Build the V1..V4 strategy comparison table as a list of printable lines."""
+    try:
+        cfg = _load_config()
+    except Exception as e:
+        return [f"  Failed to load config.yaml: {e}"]
+
+    trading = cfg.get("trading", {})
+    accounts = cfg.get("accounts", {})
+
+    versions = ("v1", "v2", "v3", "v4")
+    eff = {v: {**trading, **accounts.get(v, {})} for v in versions}
+
+    def neg_pct(val):
+        if val is None:
+            return None
+        return "0" if val == 0 else f"-{val*100:.4g}%"
+
+    def pos_pct(val):
+        if val is None:
+            return None
+        return "0" if val == 0 else f"+{val*100:.4g}%"
+
+    def plain_pct(val):
+        if val is None:
+            return None
+        return "0" if val == 0 else f"{val*100:.4g}%"
+
+    def cell(v, key, *, only_strategy=None, formatter=pos_pct):
+        p = eff[v]
+        if only_strategy and p.get("strategy_version", "v1") not in only_strategy:
+            return "—"
+        if key not in p:
+            return "—"
+        out = formatter(p.get(key))
+        return "—" if out is None else out
+
+    rows = [
+        ("strategy_version",                  [eff[v].get("strategy_version", "v1") for v in versions]),
+        ("profit_take_pct",                    [cell(v, "profit_take_pct",                  only_strategy={"v1"}) for v in versions]),
+        ("loss_cut_pct",                       [cell(v, "loss_cut_pct",                     only_strategy={"v1"}, formatter=neg_pct) for v in versions]),
+        ("profit_take_vs_prior_close_pct",     [cell(v, "profit_take_vs_prior_close_pct",   only_strategy={"v1"}) for v in versions]),
+        ("loss_cut_vs_prior_close_pct",        [cell(v, "loss_cut_vs_prior_close_pct",      only_strategy={"v1"}, formatter=neg_pct) for v in versions]),
+        ("v2_profit_take_pct",                 [cell(v, "v2_profit_take_pct",               only_strategy={"v2"}) for v in versions]),
+        ("v2_loss_cut_pct",                    [cell(v, "v2_loss_cut_pct",                  only_strategy={"v2"}, formatter=neg_pct) for v in versions]),
+        ("v2_profit_take_vs_prior_close_pct",  [cell(v, "v2_profit_take_vs_prior_close_pct",only_strategy={"v2"}) for v in versions]),
+        ("v2_loss_cut_vs_prior_close_pct",     [cell(v, "v2_loss_cut_vs_prior_close_pct",   only_strategy={"v2"}, formatter=neg_pct) for v in versions]),
+        ("v2_min_hold_minutes",                [cell(v, "v2_min_hold_minutes",              only_strategy={"v2"}, formatter=lambda x: f"{x}m") for v in versions]),
+        ("v2_sell_threshold",                  [cell(v, "v2_sell_threshold",                only_strategy={"v2"}, formatter=str) for v in versions]),
+        ("v2_rebalance_dead_band_pct",         [cell(v, "v2_rebalance_dead_band_pct",       only_strategy={"v2"}, formatter=plain_pct) for v in versions]),
+        ("buy_threshold",                      [str(eff[v].get("buy_threshold", "—"))      for v in versions]),
+    ]
+
+    label_w = max(len(r[0]) for r in rows)
+    col_w = max(len(v.upper()) for v in versions)
+    for _, cells in rows:
+        col_w = max(col_w, *(len(c) for c in cells))
+
+    lines = []
+    header = f"  {'param':<{label_w}}  " + "  ".join(f"{v.upper():<{col_w}}" for v in versions)
+    lines.append(f"  {BOLD}{header.strip()}{RESET}")
+    lines.append(f"  {'-' * label_w}  " + "  ".join("-" * col_w for _ in versions))
+    for name, cells in rows:
+        formatted = []
+        for i, c in enumerate(cells):
+            text = f"{c:<{col_w}}"
+            if active_version == versions[i]:
+                text = f"{YELLOW}{text}{RESET}"
+            formatted.append(text)
+        lines.append(f"  {name:<{label_w}}  " + "  ".join(formatted))
+    return lines
+
+
 def cmd_info(_args):
-    """Show detailed reference guide."""
-    print(textwrap.dedent("""\
+    """Show reference guide + effective configuration for all versions."""
+    try:
+        cfg = _load_config()
+    except Exception as e:
+        print(f"  Failed to load config.yaml: {e}")
+        return
 
-      AiTrading — Reference Guide
-      ============================
+    trading = cfg.get("trading", {})
+    accounts = cfg.get("accounts", {})
+    scoring = cfg.get("scoring", {})
+    screener = cfg.get("screener", {})
+    macro = cfg.get("macro", {})
+    schedule = cfg.get("schedule", {})
 
-      OPERATION MODES
-      ---------------
+    print()
+    print(f"  {BOLD}AiTrading — Reference Guide{RESET}")
+    print(f"  ============================")
+    if ACTIVE_VERSION:
+        eff_active = {**trading, **accounts.get(ACTIVE_VERSION, {})}
+        print(f"\n  {BOLD}Active version:{RESET} {ACTIVE_VERSION.upper()} "
+              f"(strategy: {eff_active.get('strategy_version', 'v1')})")
 
-      Dry Run (./aitrade dry-run [--no-macro])
-        Scans S&P 500, filters, scores, prints top 20 ranked stocks.
-        With --no-macro: skips macro overlay, uses base config values.
-        No trades executed.
+    print(f"\n  {BOLD}OPERATION MODES{RESET}")
+    print(f"  ---------------\n")
+    print(f"  Dry run        ./aitrade dry-run [--no-macro]    Scan + score, no trades")
+    print(f"  Single cycle   ./aitrade once    [--no-macro]    One full pipeline pass")
+    print(f"  Continuous     ./aitrade run     [--no-macro]    Start APScheduler")
+    print(f"  Dashboard      ./aitrade dashboard [--port N]    Web UI on :5000")
 
-      Single Cycle (./aitrade once [--no-macro])
-        One complete pipeline: screen > analyze > evaluate > trade > exit.
+    rerank = schedule.get("rerank_interval_minutes", 1)
+    prep = schedule.get("prep_minutes_before_open", 5)
+    open_t = schedule.get("market_open", "09:30")
+    print(f"\n  Scheduler jobs (when running):")
+    print(f"    Pre-market prep    {open_t} − {prep}m ET, Mon–Fri")
+    print(f"    Full cycle         Hourly, market hours")
+    print(f"    Re-rank            Every {rerank} min during market hours")
 
-      Continuous (./aitrade run [--no-macro])
-        Starts APScheduler. Ctrl+C for graceful shutdown.
+    print(f"\n  {BOLD}STRATEGY COMPARISON (effective per-version values){RESET}")
+    print(f"  --------------------------------------------------\n")
+    for line in _strategy_table_lines(ACTIVE_VERSION):
+        print(line)
 
-        Jobs:
-          Pre-market prep    9:25 AM ET, Mon-Fri     Full scan, score, cache
-          Market open trade  9:29 AM ET              Execute using cached analysis
-          Full cycle         Hourly, 10 AM-3 PM ET   Full universe scan + trade
-          Re-rank            Every 1 min              Re-score shortlist + held
-          Position monitor   Every 30 sec             Stop-loss, trailing, take-profit
+    print(f"\n  {BOLD}SHARED TRADING PARAMS{RESET}")
+    print(f"  ---------------------\n")
+    for k in ("paper_trading", "cash_only", "cash_slippage_buffer",
+              "purchase_power_pct", "cooldown_hours"):
+        if k in trading:
+            print(f"  {k:<24} {trading[k]}")
 
-      Dashboard (./aitrade dashboard [--port N])
-        Web UI at http://127.0.0.1:5000. Read-only DB access, dark theme.
+    print(f"\n  {BOLD}SCORING WEIGHTS{RESET}")
+    print(f"  ---------------\n")
+    for k in ("technical_weight", "fundamental_weight", "momentum_weight", "sentiment_weight"):
+        if k in scoring:
+            print(f"  {k:<24} {scoring[k]}")
 
-      SCANNING
-      --------
+    print(f"\n  {BOLD}SCREENER FILTERS{RESET}")
+    print(f"  ----------------\n")
+    for k in ("min_price", "max_price", "min_avg_volume", "min_market_cap", "universe"):
+        if k in screener:
+            print(f"  {k:<24} {screener[k]}")
 
-      ./aitrade scan                          Show filter-passing candidates
-      ./aitrade scan --analyze                Full scoring (slower)
-      ./aitrade scan --tickers AAPL NVDA      Analyze specific tickers
-      ./aitrade scan --analyze --top 5        Top N results only
+    print(f"\n  {BOLD}MACRO OVERLAY{RESET}")
+    print(f"  -------------\n")
+    print(f"  enabled                  {macro.get('enabled')}")
+    print(f"  cache_ttl_hours          {macro.get('cache_ttl_hours')}")
+    print(f"  --no-macro               disable for a single run")
 
-      CONFIGURATION (config.yaml)
-      ---------------------------
+    print(f"\n  {BOLD}LOGS{RESET}")
+    print(f"  ----\n")
+    print(f"  data/logs/main.log          Application log (rotating)")
+    print(f"  data/logs/transactions.log  Buy/sell/exit events")
+    print(f"  data/logs/alerts.json       Trading alerts")
 
-      Trading:
-        max_positions: 15       Max simultaneous positions
-        buy_threshold: 60       Min composite score to buy
-        stop_loss_pct: 0.05     5% hard stop-loss
-        trailing_stop_pct: 0.05 5% trailing stop from peak
-        take_profit_pct: 0.15   15% take-profit
-        paper_trading: true     USE PAPER TRADING FIRST
-
-      Scoring weights:
-        technical: 0.35   fundamental: 0.25   momentum: 0.25   sentiment: 0.15
-
-      Screener filters:
-        min_price: 5.0    max_price: 500.0    min_avg_volume: 500,000
-
-      Macro overlay:
-        enabled: true           Adjusts parameters based on economic conditions
-        cache_ttl_hours: 4      How often to refresh macro data
-        --no-macro flag         Overrides config to disable
-
-      DATABASE TABLES
-      ---------------
-
-      universe            S&P 500 tickers, sectors, market caps
-      scores              Historical analysis scores per ticker
-      positions           Open and closed positions with entry/exit
-      orders              Order log with Alpaca order IDs
-      price_snapshots     Price history from monitoring
-      portfolio_snapshots Portfolio value over time
-
-      LOGS
-      ----
-
-      data/logs/main.log          Application log (rotating, 50MB)
-      data/logs/transactions.log  Buy/sell/exit events
-      data/logs/alerts.json       Trading alerts
-
-      SAFETY
-      ------
-
-      * Paper trading by default
-      * 10% cash reserve always held (25% in risk-off with macro)
-      * Drawdown protection: reduce at -10%, liquidate at -15%
-      * Trailing stops: sells if price drops 5% from peak
-      * Sector limits: max 30% in any sector (macro-adjusted)
-      * Order retries: 3 attempts with 2s delay
-
-      See DESIGN.md for full architecture and scoring details.
-      See EXPLAINED.md for plain-language walkthrough.
-    """))
+    print(f"\n  See DOCS.md for full architecture, scoring, and design notes.\n")
 
 
 # ── Interactive menus ───────────────────────────────────────────────────────
 
-def _version_config_desc(version):
-    """Return a compact description of effective trading params for a version."""
-    try:
-        import yaml
-        with open(os.path.join(PROJECT_ROOT, "config.yaml")) as f:
-            cfg = yaml.safe_load(f)
-    except Exception:
-        return ""
-
-    p = {**cfg.get("trading", {}), **cfg.get("accounts", {}).get(version, {})}
-    strat = p.get("strategy_version", "v1")
-    parts = []
-
-    if strat == "v1":
-        pt = p.get("profit_take_pct", 0)
-        lc = p.get("loss_cut_pct", 0)
-        parts.append(f"+{pt*100:.4g}%/-{lc*100:.4g}%")
-        if p.get("v2_loss_cut_vs_prior_close_pct", 0):
-            parts.append(f"-{p['v2_loss_cut_vs_prior_close_pct']*100:.4g}% prior-close")
-        if p.get("v2_profit_take_vs_prior_close_pct", 0):
-            parts.append(f"+{p['v2_profit_take_vs_prior_close_pct']*100:.4g}% prior-close")
-        parts.append("no hold")
-    else:
-        pt = p.get("v2_profit_take_pct", 0)
-        lc = p.get("v2_loss_cut_pct", 0)
-        parts.append(f"+{pt*100:.4g}%/-{lc*100:.4g}%")
-        if p.get("v2_loss_cut_vs_prior_close_pct", 0):
-            parts.append(f"-{p['v2_loss_cut_vs_prior_close_pct']*100:.4g}% prior-close")
-        if p.get("v2_profit_take_vs_prior_close_pct", 0):
-            parts.append(f"+{p['v2_profit_take_vs_prior_close_pct']*100:.4g}% prior-close")
-        hold = p.get("v2_min_hold_minutes", 30)
-        parts.append(f"{hold}m hold" if hold > 0 else "no hold")
-
-    return " · ".join(parts)
-
-
 def menu_version():
     """Select trading strategy version."""
     global ACTIVE_VERSION
-    labels = {
-        "v1": "V1 — Original",
-        "v2": "V2 — Anti-churn",
-        "v3": "V3 — Custom",
-        "v4": "V4 — No hold",
-    }
-    items = [
-        {"label": labels[v], "desc": _version_config_desc(v), "value": v}
-        for v in ("v1", "v2", "v3", "v4")
-    ]
-    choice = pick_menu("Select Version", items, back_label="Back")
+    print(f"\n  {BOLD}Strategy comparison{RESET}")
+    print(f"  -------------------\n")
+    for line in _strategy_table_lines(ACTIVE_VERSION):
+        print(line)
+    print()
+    choice = pick_menu("Select Version", [
+        {"label": "V1 — Original",   "desc": "", "value": "v1"},
+        {"label": "V2 — Anti-churn", "desc": "", "value": "v2"},
+        {"label": "V3 — Custom",     "desc": "", "value": "v3"},
+        {"label": "V4 — No hold",    "desc": "", "value": "v4"},
+    ], back_label="Back")
 
     if choice is None:
         return False
