@@ -221,8 +221,15 @@ def input_prompt(prompt, default=""):
 # ── Hint: show equivalent CLI command ───────────────────────────────────────
 
 def show_command(cmd_parts):
-    """Print the CLI command the user could run directly."""
-    print(f"\n  {DIM}$ ./aitrade {' '.join(cmd_parts)}{RESET}\n")
+    """Print the CLI command the user could run directly.
+
+    Always prefixes the active --version flag (if set and not already present),
+    so users can copy the exact command to skip the menu next time.
+    """
+    parts = list(cmd_parts)
+    if ACTIVE_VERSION and "--version" not in parts:
+        parts = ["--version", ACTIVE_VERSION] + parts
+    print(f"\n  {DIM}$ ./aitrade {' '.join(parts)}{RESET}\n")
 
 
 # ── Commands ────────────────────────────────────────────────────────────────
