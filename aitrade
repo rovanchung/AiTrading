@@ -582,15 +582,56 @@ def cmd_info(_args):
 
 # ── Interactive menus ───────────────────────────────────────────────────────
 
+def _version_config_desc(version):
+    """Return a compact description of effective trading params for a version."""
+    try:
+        import yaml
+        with open(os.path.join(PROJECT_ROOT, "config.yaml")) as f:
+            cfg = yaml.safe_load(f)
+    except Exception:
+        return ""
+
+    p = {**cfg.get("trading", {}), **cfg.get("accounts", {}).get(version, {})}
+    strat = p.get("strategy_version", "v1")
+    parts = []
+
+    if strat == "v1":
+        pt = p.get("profit_take_pct", 0)
+        lc = p.get("loss_cut_pct", 0)
+        parts.append(f"+{pt*100:.4g}%/-{lc*100:.4g}%")
+        if p.get("v2_loss_cut_vs_prior_close_pct", 0):
+            parts.append(f"-{p['v2_loss_cut_vs_prior_close_pct']*100:.4g}% prior-close")
+        if p.get("v2_profit_take_vs_prior_close_pct", 0):
+            parts.append(f"+{p['v2_profit_take_vs_prior_close_pct']*100:.4g}% prior-close")
+        parts.append("no hold")
+    else:
+        pt = p.get("v2_profit_take_pct", 0)
+        lc = p.get("v2_loss_cut_pct", 0)
+        parts.append(f"+{pt*100:.4g}%/-{lc*100:.4g}%")
+        if p.get("v2_loss_cut_vs_prior_close_pct", 0):
+            parts.append(f"-{p['v2_loss_cut_vs_prior_close_pct']*100:.4g}% prior-close")
+        if p.get("v2_profit_take_vs_prior_close_pct", 0):
+            parts.append(f"+{p['v2_profit_take_vs_prior_close_pct']*100:.4g}% prior-close")
+        hold = p.get("v2_min_hold_minutes", 30)
+        parts.append(f"{hold}m hold" if hold > 0 else "no hold")
+
+    return " · ".join(parts)
+
+
 def menu_version():
     """Select trading strategy version."""
     global ACTIVE_VERSION
-    choice = pick_menu("Select Version", [
-        {"label": "V1 — Original",    "desc": "1% profit / 0.5% loss / no hold time", "value": "v1"},
-        {"label": "V2 — Anti-churn",  "desc": "3% profit / 2% loss / 30m hold / hysteresis", "value": "v2"},
-        {"label": "V3 — Custom",      "desc": "5% profit / 3% loss / v2 strategy", "value": "v3"},
-        {"label": "V4 — No hold",     "desc": "5% profit / 3% loss / no hold time", "value": "v4"},
-    ], back_label="Back")
+    labels = {
+        "v1": "V1 — Original",
+        "v2": "V2 — Anti-churn",
+        "v3": "V3 — Custom",
+        "v4": "V4 — No hold",
+    }
+    items = [
+        {"label": labels[v], "desc": _version_config_desc(v), "value": v}
+        for v in ("v1", "v2", "v3", "v4")
+    ]
+    choice = pick_menu("Select Version", items, back_label="Back")
 
     if choice is None:
         return False
