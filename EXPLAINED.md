@@ -219,14 +219,14 @@ Sold tickers enter a **2-hour cooldown** — the system won't re-buy them immedi
 
 ### Step 2: Score-Based Redistribution
 ```
-IF composite_score >= 60 (buy_threshold, macro-adjusted)
+IF composite_score >= trading.buy_threshold (macro-adjusted)
 THEN → allocate capital proportionally by score
 ```
 
 50% of portfolio value is distributed across qualifying stocks. Each stock's share is proportional to its composite score. The system buys/sells shares to reach the target allocation.
 
 **V2-strategy extras** (V2, V3, V4):
-- **Hysteresis**: A position is only sold for "no longer qualifies" if its score drops below **55** (not 60). This 5-point buffer prevents churn when scores oscillate near the threshold.
+- **Hysteresis**: A position is only sold for "no longer qualifies" if its score drops below `trading.v2_sell_threshold` (rather than `trading.buy_threshold`). Per-account overrides — e.g. `accounts.v4.account_overrides.v4_2` — can tighten or loosen this. The buffer prevents churn when scores oscillate near the threshold. Note: the macro overlay shifts the **buy** threshold but leaves this sell threshold fixed.
 - **Dead band**: Rebalance trades are skipped if the allocation difference is ≤ 3% of portfolio value — don't trade for tiny adjustments.
 
 ---
@@ -275,8 +275,9 @@ Before the system picks stocks, it reads the "weather" of the overall economy:
 
 The macro score (44.9) classifies the regime as **neutral** — not great, not terrible. This adjusts the system:
 
-- **Buy threshold**: 60 → 65 (+5 in neutral regime)
-- In risk-off (score < 40): buy threshold jumps to 75, only top stocks qualify
+- **`trading.buy_threshold` offset**: risk-on −5, neutral 0, risk-off +10 (applied on top of the configured base in `config.yaml`)
+- `trading.v2_sell_threshold` is *not* macro-adjusted — only the buy gate moves
+- Risk-off also drops max positions (−5) and raises cash reserve (+15%)
 
 The cycle classification (**late_cycle**) adjusts which sectors get more room:
 - **Energy, Materials, Industrials, Healthcare** → favored (allowed 40% of portfolio)
@@ -301,6 +302,6 @@ Rates stable    → score 60  (neutral)
 ```
 
 If the macro score drops below 40 (risk-off), the system gets very defensive:
-- Buy threshold jumps to 75 (only the top ~5% of stocks qualify)
-- Max positions drop to 5
-- Cash reserve increases to 35%
+- `trading.buy_threshold` offset jumps to +10 (only the top stocks qualify)
+- Max positions drop by 5
+- Cash reserve increases by 15%

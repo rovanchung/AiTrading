@@ -151,11 +151,13 @@ The macro module (`analyzer/economic.py`) operates as a **portfolio-level overla
 
 4. **Classify economic cycle**: early_recovery, expansion, late_cycle, recession
 
-5. **Adjust portfolio parameters** (buy threshold offset applied to base value of 60):
+5. **Adjust portfolio parameters** — offset added on top of the base `trading.buy_threshold` in `config.yaml`. Only `buy_threshold` is shifted; `trading.v2_sell_threshold` is **not** macro-adjusted (see `portfolio/manager.py:_get_effective_param`):
 
 | Parameter | Risk-on | Neutral | Risk-off |
 |-----------|---------|---------|----------|
-| Buy threshold | 60 (base) | 65 (+5) | 75 (+15) |
+| `trading.buy_threshold` offset | −5 | 0 | +10 |
+| Max positions adj. | 0 | −2 | −5 |
+| Cash reserve adj. | −5% | 0 | +15% |
 
 6. **Adjust sector limits by cycle phase** (Sam Stovall's sector rotation):
 
@@ -251,11 +253,11 @@ Profit/loss thresholds and hold rules vary by account version. Per-account overr
 | Profit take | +1% | +3% | +5% | +5% | Sell and reallocate |
 | Loss cut | -0.5% | -2% | -3% | -3% | Sell to limit losses |
 | Min hold time | None | 30 min | 30 min | None | Prevent premature sells |
-| Sell threshold | 60 (= buy) | 55 | 55 | 55 | Score hysteresis for qualification sells |
-| Rebalance dead band | None | 3% | 3% | 3% | Skip small rebalance trades |
-| Cooldown | 2 hours | 2 hours | 2 hours | 2 hours | Prevent re-buying a just-sold ticker |
-| Purchase power | 50% | 50% | 50% | 50% | Capital allocated for redistribution |
-| Buy threshold | 60 (macro-adjusted) | 60 (macro-adjusted) | 60 (macro-adjusted) | 60 (macro-adjusted) | Minimum composite score to qualify |
+| Sell threshold | `trading.buy_threshold` (= buy) | `trading.v2_sell_threshold` | `trading.v2_sell_threshold` | `trading.v2_sell_threshold` (override in `accounts.v4.account_overrides.v4_2`) | Score hysteresis for qualification sells; **not** macro-adjusted |
+| Rebalance dead band | None | `trading.v2_rebalance_dead_band_pct` | `trading.v2_rebalance_dead_band_pct` | `trading.v2_rebalance_dead_band_pct` (override for `v4_2`) | Skip small rebalance trades |
+| Cooldown | `trading.cooldown_hours` | `trading.cooldown_hours` | `trading.cooldown_hours` | `trading.cooldown_hours` | Prevent re-buying a just-sold ticker |
+| Purchase power | `trading.purchase_power_pct` | `trading.purchase_power_pct` | `trading.purchase_power_pct` | `trading.purchase_power_pct` | Capital allocated for redistribution |
+| Buy threshold | `trading.buy_threshold` (macro-adjusted) | `trading.buy_threshold` (macro-adjusted) | `trading.buy_threshold` (macro-adjusted) | `trading.buy_threshold` (macro-adjusted) | Minimum composite score to qualify |
 
 Each strategy version runs with its own database and Alpaca credentials. Credentials can be selected per-process via `--account <suffix>` (picks `ALPACA_API_KEY_{suffix}` / `ALPACA_SECRET_KEY_{suffix}` and uses a unique `data/trading_{version}_{account}.db`), which lets the same version run concurrently against multiple Alpaca accounts. Without `--account`, credentials fall back to the `ALPACA_ACCOUNT_V{N}=<suffix>` mapping in `.env`, then to legacy `ALPACA_API_KEY_V{N}` naming, then to bare `ALPACA_API_KEY`. V2/V3/V4 use the v2 strategy engine (hysteresis + dead band); V1 uses the original logic.
 
