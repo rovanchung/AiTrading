@@ -119,8 +119,8 @@ The macro overlay automatically adjusts trading parameters based on economic con
 | `.env` | Alpaca credential pairs (any suffix), `ALPACA_ACCOUNT_V{1-4}` mapping, Finnhub, FMP (gitignored) |
 | `data/trading_v{1-4}.db` | Default per-version SQLite databases (when `--account` is not passed) |
 | `data/trading_{version}_{account}.db` | Per-(version, account) DBs when `--account` is specified |
-| `data/logs/main.log` | Application logs (rotating, 50MB max) |
-| `data/logs/transactions.log` | Transaction log (buy/sell/exit events) |
+| `data/logs/main[_{version}[_{account}]].log` | Application logs — split per version/account when `--version` is passed; falls back to `main.log` otherwise (rotating, 50MB max) |
+| `data/logs/transactions[_{version}[_{account}]].log` | Transaction log (buy/sell/exit events) — same naming as main log |
 | `data/logs/alerts.json` | Trading alerts (opens, closes, stops, errors) |
 
 ## Project Structure

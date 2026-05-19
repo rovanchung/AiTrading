@@ -37,9 +37,14 @@ def setup_logging(config: Config) -> logging.Logger:
 
 
 def setup_transaction_logger(config: Config) -> logging.Logger:
-    """Configure a dedicated transaction logger that writes to a separate file."""
-    log_dir = Path(config.log_file).parent
-    txn_file = log_dir / "transactions.log"
+    """Configure a dedicated transaction logger that writes to a separate file.
+
+    The transactions filename mirrors the main log's `main[_suffix]` naming,
+    so a per-version main log like `main_v3.log` pairs with `transactions_v3.log`.
+    """
+    main_log = Path(config.log_file)
+    txn_name = main_log.name.replace("main", "transactions", 1)
+    txn_file = main_log.parent / txn_name
     txn_file.parent.mkdir(parents=True, exist_ok=True)
 
     txn_logger = logging.getLogger("aitrading.transactions")

@@ -201,4 +201,10 @@ def load_config(
         db_path = f"data/trading_{version}_{account.lower()}.db"
         data.setdefault("database", {})["path"] = db_path
 
+    # Per-version log file so concurrent versions/accounts write to separate
+    # files instead of interleaving into one shared main.log.
+    if version:
+        suffix = f"{version}_{account.lower()}" if account else version
+        data.setdefault("logging", {})["file"] = f"data/logs/main_{suffix}.log"
+
     return Config(data)
