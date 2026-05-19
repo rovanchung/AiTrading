@@ -21,7 +21,7 @@ trading:
   v2_loss_cut_vs_prior_close_pct: 0.0
   v2_min_hold_minutes: 30       # don't sell until held for this long
   v2_sell_threshold: 58         # score must drop below this to trigger no_longer_qualifies
-  v2_rebalance_dead_band_pct: 0.03  # skip redistribution trades unless allocation off by >3%
+  v2_rebalance_min_share_diff: 1.0  # skip redistribution trades unless |target$-current$|/price > this many shares
 
 scoring:
   technical_weight: 0.35
@@ -96,6 +96,6 @@ accounts:
       # Merged on top of the v4 trading params above.
       v4_2:
         v2_sell_threshold: 55              # 58 → 55: less score-driven churn
-        v2_rebalance_dead_band_pct: 0.05   # 0.03 → 0.05: fewer micro-rebalances
+        v2_rebalance_min_share_diff: 2.0   # 1.0 → 2.0: fewer micro-rebalances
         max_sector_pct: 0.20               # cap any sector at 20% of slots (default 0.30)
         max_pct_per_position: 0.05         # cap a single name at 5% of equity

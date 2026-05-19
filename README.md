@@ -39,9 +39,9 @@ The system supports multiple strategy versions, each with its own parameters. Ru
 | Version | Strategy | Profit | Loss | Hold time | Hysteresis |
 |---------|----------|--------|------|-----------|------------|
 | **V1** — Original | v1 | 1% | 0.5% | None | No (sell threshold = buy threshold) |
-| **V2** — Anti-churn | v2 | 3% | 2% | 30 min | Yes (sell < 55, 3% dead band) |
-| **V3** — Custom | v2 | 5% | 3% | 30 min | Yes (sell < 55, 3% dead band) |
-| **V4** — No hold | v2 | 5% | 3% | None | Yes (sell < 55, 3% dead band) |
+| **V2** — Anti-churn | v2 | 3% | 2% | 30 min | Yes (sell < 55, min 1 share rebalance) |
+| **V3** — Custom | v2 | 5% | 3% | 30 min | Yes (sell < 55, min 1 share rebalance) |
+| **V4** — No hold | v2 | 5% | 3% | None | Yes (sell < 55, min 1 share rebalance) |
 
 ## Alpaca Accounts
 

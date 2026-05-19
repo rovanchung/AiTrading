@@ -219,15 +219,18 @@ Sold tickers enter a **2-hour cooldown** — the system won't re-buy them immedi
 
 ### Step 2: Score-Based Redistribution
 ```
-IF composite_score >= trading.buy_threshold (macro-adjusted)
-THEN → allocate capital proportionally by score
+qualifying = (composite_score >= trading.buy_threshold, macro-adjusted)
+          ∪ (currently held AND composite_score >= trading.v2_sell_threshold)
+THEN → allocate capital proportionally by score across the qualifying set
 ```
 
 50% of portfolio value is distributed across qualifying stocks. Each stock's share is proportional to its composite score. The system buys/sells shares to reach the target allocation.
 
+Held positions still above `v2_sell_threshold` are kept inside the qualifying set so they consume budget instead of riding free outside it — without this, drift names in the hysteresis band would inflate total invested above the `purchase_power_pct` target.
+
 **V2-strategy extras** (V2, V3, V4):
 - **Hysteresis**: A position is only sold for "no longer qualifies" if its score drops below `trading.v2_sell_threshold` (rather than `trading.buy_threshold`). Per-account overrides — e.g. `accounts.v4.account_overrides.v4_2` — can tighten or loosen this. The buffer prevents churn when scores oscillate near the threshold. Note: the macro overlay shifts the **buy** threshold but leaves this sell threshold fixed.
-- **Dead band**: Rebalance trades are skipped if the allocation difference is ≤ 3% of portfolio value — don't trade for tiny adjustments.
+- **Min share-diff rebalance floor** (`trading.v2_rebalance_min_share_diff`): Rebalance trades skip if `|target$ − current$| / price ≤ N` shares — don't trade for sub-share adjustments. Per-stock, not per-portfolio.
 
 ---
 

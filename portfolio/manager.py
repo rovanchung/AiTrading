@@ -182,10 +182,10 @@ class PortfolioManager:
 
         if self._is_v2:
             sell_threshold = self.tc.get("v2_sell_threshold", 55)
-            dead_band_pct = self.tc.get("v2_rebalance_dead_band_pct", 0.03)
+            min_share_diff = self.tc.get("v2_rebalance_min_share_diff", 1.0)
         else:
             sell_threshold = buy_threshold  # no hysteresis in v1
-            dead_band_pct = 0.0
+            min_share_diff = 0.0
 
         # Concentration caps (0 = disabled). Applied to NEW buys only:
         # - max_pct_per_position: ceiling on a single name's allocation
@@ -208,11 +208,24 @@ class PortfolioManager:
         # Build score lookup
         score_map = {c.ticker: c.composite for c in candidates}
 
-        # Filter qualifying candidates (for buys: must meet buy_threshold)
+        # Tickers we currently hold (excluding those being sold this cycle).
+        # Held positions with score >= sell_threshold are included in the
+        # qualifying set so they participate in proportional allocation
+        # rather than free-riding outside the redistribution budget.
+        held_tickers = {
+            p.ticker for p in positions if p.ticker not in profit_sold_tickers
+        }
+
+        # Filter qualifying candidates: above buy_threshold (new entries OK),
+        # or currently held and still above sell_threshold (hysteresis).
         qualifying = [
             c
             for c in candidates
-            if c.composite >= buy_threshold and c.ticker not in excluded
+            if c.ticker not in excluded
+            and (
+                c.composite >= buy_threshold
+                or (c.ticker in held_tickers and c.composite >= sell_threshold)
+            )
         ]
 
         available_capital = portfolio_value * purchase_power_pct
@@ -221,7 +234,7 @@ class PortfolioManager:
             f"purchase_power={purchase_power_pct:.0%} "
             f"available=${available_capital:,.2f} "
             f"buy_threshold={buy_threshold} sell_threshold={sell_threshold} "
-            f"dead_band={dead_band_pct:.1%} | "
+            f"min_share_diff={min_share_diff:.2f} | "
             f"candidates={len(candidates)} qualifying={len(qualifying)} "
             f"held={len(positions)}"
         )
@@ -256,7 +269,7 @@ class PortfolioManager:
             "buy": 0,
             "sell_reduce": 0,
             "hold_in_band": 0,
-            "skip_dead_band": 0,
+            "skip_min_share_diff": 0,
             "skip_min_hold": 0,
             "skip_no_price": 0,
             "skip_no_score": 0,
@@ -321,15 +334,16 @@ class PortfolioManager:
 
             if target_qty > current_qty:
                 buy_qty = target_qty - current_qty
-                # v2: skip if allocation difference is within dead band (only
-                # applies when already holding — initial entries always pass)
-                if dead_band_pct > 0 and current_qty > 0:
-                    alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
-                    if alloc_diff <= dead_band_pct:
+                # v2: skip if the dollar gap is worth less than min_share_diff
+                # shares at the current price (only applies when already
+                # holding — initial entries always pass)
+                if min_share_diff > 0 and current_qty > 0:
+                    share_diff = abs(target_dollars - current_dollars) / current_price
+                    if share_diff <= min_share_diff:
                         logger.info(
-                            f"{base} gap={alloc_diff:.1%} → skip: within dead band"
+                            f"{base} gap={share_diff:.2f}sh → skip: below min_share_diff"
                         )
-                        stats["skip_dead_band"] += 1
+                        stats["skip_min_share_diff"] += 1
                         continue
                 # Sector cap on NEW positions only — top-ups to held names are
                 # already counted in the current sector tally.
@@ -362,14 +376,15 @@ class PortfolioManager:
                 )
             elif target_qty < current_qty:
                 sell_qty = current_qty - target_qty
-                # v2: skip if allocation difference is within dead band
-                if dead_band_pct > 0:
-                    alloc_diff = abs(target_dollars - current_dollars) / portfolio_value
-                    if alloc_diff <= dead_band_pct:
+                # v2: skip if the dollar gap is worth less than min_share_diff
+                # shares at the current price
+                if min_share_diff > 0:
+                    share_diff = abs(target_dollars - current_dollars) / current_price
+                    if share_diff <= min_share_diff:
                         logger.info(
-                            f"{base} gap={alloc_diff:.1%} → skip: within dead band"
+                            f"{base} gap={share_diff:.2f}sh → skip: below min_share_diff"
                         )
-                        stats["skip_dead_band"] += 1
+                        stats["skip_min_share_diff"] += 1
                         continue
                 proceeds = sell_qty * current_price
                 planned_sell_value += proceeds
@@ -441,7 +456,7 @@ class PortfolioManager:
             f"[redistribute] summary: "
             f"buys={stats['buy']} (~${planned_buy_cost:,.2f}) "
             f"sells={total_sells} (~${planned_sell_value:,.2f}) | "
-            f"skip_dead_band={stats['skip_dead_band']} "
+            f"skip_min_share_diff={stats['skip_min_share_diff']} "
             f"skip_min_hold={stats['skip_min_hold']} "
             f"skip_no_score={stats['skip_no_score']} "
             f"hold_in_band={stats['hold_in_band']} "
