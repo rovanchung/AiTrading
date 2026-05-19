@@ -8,7 +8,7 @@ trading:
   profit_take_vs_prior_close_pct: 0.0
   loss_cut_vs_prior_close_pct: 0.0
   purchase_power_pct: 0.50      # 50% of portfolio value for redistribution
-  cooldown_hours: 24             # hours before re-buying a profit/loss sold ticker
+  cooldown_hours: 8             # hours before re-buying a profit/loss sold ticker
   paper_trading: true
   cash_only: true                # cap buys at available cash; avoid margin borrowing
   cash_slippage_buffer: 0.005    # reserve 0.5% of cash for fill-price slippage
@@ -80,16 +80,17 @@ accounts:
   v3:
     database_path: "data/trading_v3.db"
     strategy_version: "v2"
-    v2_profit_take_pct: 0.2      # same as v3: +5% profit target
-    v2_loss_cut_pct: 0.03         # same as v3: -3% stop loss
-    v2_loss_cut_vs_prior_close_pct: 0.03  # -3% from prior close -> sell
-    v2_min_hold_minutes: 480
+    v2_profit_take_pct: 0.2
+    v2_loss_cut_pct: 0.02
+    v2_loss_cut_vs_prior_close_pct: 0.02
+    v2_min_hold_minutes: 0
+    v2_sell_threshold: 65
   v4:
     database_path: "data/trading_v4.db"
     strategy_version: "v2"
-    v2_profit_take_pct: 0.05      # same as v3: +5% profit target
-    v2_loss_cut_pct: 0.03         # same as v3: -3% stop loss
-    v2_min_hold_minutes: 0        # no hold time (like v1)
+    v2_profit_take_pct: 0.05
+    v2_loss_cut_pct: 0.03
+    v2_min_hold_minutes: 0
     account_overrides:
       # Per-Alpaca-account overrides (selected by --account <suffix>, lowercased).
       # Merged on top of the v4 trading params above.
