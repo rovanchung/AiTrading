@@ -180,9 +180,12 @@ function autoRefresh(fn, intervalMs = 30000) {
 }
 
 // --- DataTables default config ---
+// Start small; fitDataTableToViewport() grows the page if there's actual
+// vertical room. This guarantees the rendered table never starts taller
+// than the viewport, even if the fit measurement is delayed or fails.
 const DT_DEFAULTS = {
     paging: true,
-    pageLength: 25,
+    pageLength: 8,
     ordering: true,
     searching: true,
     info: true,
@@ -192,3 +195,68 @@ const DT_DEFAULTS = {
         zeroRecords: '<span class="text-gray-500">No matching records</span>',
     },
 };
+
+// Measure each DataTable's actual rendered position and set pageLength so
+// the widget fits within the viewport vertically. Row navigation is via
+// DataTables pagination.
+function fitDataTableToViewport(api, depth) {
+    const tableEl = api.table().node();
+    if (!tableEl) return;
+    const tbody = tableEl.tBodies[0];
+    if (!tbody) return;
+    const rowCount = tbody.rows.length;
+    if (rowCount === 0) return;
+    const wrapperEl = tableEl.closest('.dataTables_wrapper, .dt-container') || tableEl;
+    const tbodyRect = tbody.getBoundingClientRect();
+    const wrapperRect = wrapperEl.getBoundingClientRect();
+    const belowChrome = Math.max(0, wrapperRect.bottom - tbodyRect.bottom);
+    const bottomMargin = 16;
+    const rowH = tbodyRect.height / rowCount;
+    if (!isFinite(rowH) || rowH <= 0) return;
+    const availableForRows = window.innerHeight - tbodyRect.top - belowChrome - bottomMargin;
+    const newLen = Math.max(3, Math.floor(availableForRows / rowH));
+    if (api.page.len() === newLen) {
+        if (wrapperRect.bottom > window.innerHeight && newLen > 3 && (depth || 0) < 5) {
+            api.page.len(newLen - 1).draw(false);
+            requestAnimationFrame(() => fitDataTableToViewport(api, (depth || 0) + 1));
+        }
+        return;
+    }
+    api.page.len(newLen).draw(false);
+    if ((depth || 0) < 3) {
+        requestAnimationFrame(() => fitDataTableToViewport(api, (depth || 0) + 1));
+    }
+}
+
+function fitAllDataTables() {
+    if (typeof $ === 'undefined' || !$.fn || !$.fn.dataTable) return;
+    const tables = $.fn.dataTable.tables();
+    for (let i = 0; i < tables.length; i++) {
+        const api = $(tables[i]).DataTable();
+        fitDataTableToViewport(api);
+    }
+}
+
+$(function() {
+    if (typeof $ !== 'undefined' && $.fn && $.fn.dataTable) {
+        $(document).on('init.dt', function(e, settings) {
+            const api = new $.fn.dataTable.Api(settings);
+            requestAnimationFrame(() => fitDataTableToViewport(api));
+        });
+    }
+    setTimeout(fitAllDataTables, 0);
+});
+
+window.addEventListener('load', () => {
+    fitAllDataTables();
+    // Re-measure once more after styles/fonts settle.
+    setTimeout(fitAllDataTables, 50);
+});
+
+(function attachResizeFit() {
+    let raf = null;
+    window.addEventListener('resize', () => {
+        if (raf) cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(fitAllDataTables);
+    });
+})();

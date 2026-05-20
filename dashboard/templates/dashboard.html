@@ -45,7 +45,7 @@
     </div>
     <div class="card">
         <div class="card-header mb-3">Top 10 Scores</div>
-        <div class="space-y-2 max-h-[280px] overflow-y-auto">
+        <div class="space-y-2">
             {% for s in top_scores %}
             <a href="/analysis/{{ s.ticker }}" class="flex items-center justify-between p-2 rounded hover:bg-gray-800 transition">
                 <div>
@@ -70,7 +70,7 @@
 </div>
 
 <!-- Open Positions + Recent Orders -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+<div class="flex flex-wrap items-start gap-0">
     <div class="card">
         <div class="flex items-center justify-between mb-3">
             <div class="card-header mb-0">Open Positions</div>

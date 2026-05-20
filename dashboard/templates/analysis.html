@@ -134,7 +134,7 @@
     {% if score and score.details %}
     <div class="card">
         <div class="card-header mb-3">Score Details</div>
-        <div class="space-y-3 text-sm max-h-[400px] overflow-y-auto">
+        <div class="space-y-3 text-sm">
             {% for category, items in score.details.items() %}
             <div>
                 <h4 class="text-gray-300 font-medium mb-1 capitalize">{{ category }}</h4>
