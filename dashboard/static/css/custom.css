@@ -23,7 +23,19 @@
 
 /* DataTables dark theme */
 .dataTables_wrapper { color: #94a3b8; }
-table.dataTable { border-collapse: collapse !important; }
+/* Shrink tables to fit their content so columns are easy to compare side-by-side
+   instead of stretching to fill the container, and left-align them in their card. */
+table.dataTable,
+.card table {
+    width: auto !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+    border-collapse: collapse !important;
+}
+table.dataTable thead th,
+table.dataTable tbody td {
+    white-space: nowrap;
+}
 table.dataTable thead th {
     background: #0f172a !important;
     color: #64748b !important;
@@ -32,12 +44,12 @@ table.dataTable thead th {
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    padding: 0.75rem 1rem !important;
+    padding: 0.75rem 0.6rem !important;
 }
 table.dataTable tbody td {
     background: transparent !important;
     border-bottom: 1px solid #1e293b !important;
-    padding: 0.625rem 1rem !important;
+    padding: 0.625rem 0.6rem !important;
     font-size: 0.875rem;
 }
 table.dataTable tbody tr { background: transparent !important; }
