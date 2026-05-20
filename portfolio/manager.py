@@ -54,9 +54,13 @@ class PortfolioManager:
         data: dict[str, pd.DataFrame],
     ) -> list[Signal]:
         """
-        Two-step portfolio evaluation:
+        Three-step portfolio evaluation:
         1. Profit-based sells: sell if P&L >= +profit_take% or <= -loss_cut%
-        2. Score-based redistribution: allocate purchase power proportionally by score
+        2. Score-based sells (no_longer_qualifies): sell held positions whose
+           composite score has fallen below sell_threshold (optionally
+           debounced by consecutive-count and/or moving-average rules).
+        3. Score-based redistribution: allocate purchase power proportionally
+           by score across qualifying candidates.
         """
         signals = []
         portfolio_value = account_info["portfolio_value"]
@@ -69,14 +73,24 @@ class PortfolioManager:
         )
         signals.extend(profit_sell_signals)
 
-        # --- STEP 2: Score-based redistribution ---
+        # --- STEP 2: Score-based sells (debounced no_longer_qualifies) ---
+        # `defer_tickers` covers both sold positions and those whose latest
+        # score is below sell_threshold but the debounce condition has not
+        # yet been met. The latter are held as-is — redistribute must skip
+        # them so it neither buys more nor sells down partial quantities.
+        score_sell_signals, defer_tickers = self._score_based_sells(
+            positions, ranked_candidates, profit_sold_tickers
+        )
+        signals.extend(score_sell_signals)
+
+        # --- STEP 3: Score-based redistribution ---
         redistribution_signals = self._redistribute(
             ranked_candidates,
             positions,
             alpaca_map,
             portfolio_value,
             data,
-            profit_sold_tickers,
+            profit_sold_tickers | defer_tickers,
         )
         signals.extend(redistribution_signals)
 
@@ -162,6 +176,122 @@ class PortfolioManager:
 
         return signals, sold_tickers
 
+    def _score_sell_params(self) -> tuple[float, int, int]:
+        """Resolve (sell_threshold, consecutive_n, ma_window) for the active
+        strategy version. v1 has no hysteresis (sell_threshold == buy_threshold)."""
+        if self._is_v2:
+            sell_threshold = self.tc.get("v2_sell_threshold", 55)
+            consecutive_n = self.tc.get("v2_no_longer_qualifies_consecutive", 0)
+            ma_window = self.tc.get("v2_no_longer_qualifies_ma_window", 0)
+        else:
+            sell_threshold = self._get_effective_param("buy_threshold", 60)
+            consecutive_n = self.tc.get("no_longer_qualifies_consecutive", 0)
+            ma_window = self.tc.get("no_longer_qualifies_ma_window", 0)
+        return sell_threshold, int(consecutive_n), int(ma_window)
+
+    def _should_score_sell(
+        self,
+        ticker: str,
+        latest_score: float,
+        sell_threshold: float,
+        consecutive_n: int,
+        ma_window: int,
+    ) -> bool:
+        """Decide whether `ticker` has crossed below sell_threshold for long
+        enough to trigger a no_longer_qualifies exit.
+
+        - With both debounce features disabled (<=0): single-point check —
+          true iff `latest_score < sell_threshold`. Identical to the
+          pre-debounce behavior.
+        - With either feature enabled: OR of enabled rules. Each rule needs
+          enough recorded history to evaluate; if it doesn't, that rule is
+          treated as unmet (the position stays held until data accumulates).
+        """
+        if consecutive_n <= 0 and ma_window <= 0:
+            return latest_score < sell_threshold
+
+        limit = max(consecutive_n, ma_window)
+        scores = self.db.get_recent_composite_scores(ticker, limit)
+
+        if consecutive_n > 0 and len(scores) >= consecutive_n:
+            if all(s < sell_threshold for s in scores[:consecutive_n]):
+                return True
+
+        if ma_window > 0 and len(scores) >= ma_window:
+            if (sum(scores[:ma_window]) / ma_window) < sell_threshold:
+                return True
+
+        return False
+
+    def _score_based_sells(
+        self,
+        positions: list[Position],
+        candidates: list[ScoreResult],
+        profit_sold_tickers: set[str],
+    ) -> tuple[list[Signal], set[str]]:
+        """Step 2: emit no_longer_qualifies sells for held positions whose
+        composite score has fallen below sell_threshold.
+
+        Returns (signals, defer_tickers) where defer_tickers includes:
+          - tickers being sold this cycle (sell signal emitted)
+          - tickers below sell_threshold whose debounce condition has not
+            yet been met (held as-is — caller must exclude them from
+            redistribute so they neither get topped up nor partially sold)
+        """
+        sell_threshold, consecutive_n, ma_window = self._score_sell_params()
+        score_map = {c.ticker: c.composite for c in candidates}
+
+        signals: list[Signal] = []
+        defer: set[str] = set()
+        debouncing: list[tuple[str, float]] = []
+
+        for pos in positions:
+            if pos.ticker in profit_sold_tickers:
+                continue
+            # No fresh score this cycle (data fetch dropped this ticker) →
+            # defer the decision rather than treating absence as score=0.
+            if pos.ticker not in score_map:
+                logger.info(
+                    f"[score_sells] {pos.ticker} no fresh score this cycle " f"→ skip"
+                )
+                continue
+            latest_score = score_map[pos.ticker]
+            if latest_score >= sell_threshold:
+                continue
+
+            if self._should_score_sell(
+                pos.ticker, latest_score, sell_threshold, consecutive_n, ma_window
+            ):
+                logger.info(
+                    f"[score_sells] {pos.ticker} score={latest_score:.1f} "
+                    f"< sell_threshold={sell_threshold} → "
+                    f"SELL: no_longer_qualifies"
+                )
+                signals.append(
+                    Signal(
+                        ticker=pos.ticker,
+                        action="sell",
+                        reason="no_longer_qualifies",
+                        score=0,
+                        suggested_qty=pos.qty,
+                    )
+                )
+                defer.add(pos.ticker)
+            else:
+                # Sub-threshold but debounce not yet met — hold as-is and
+                # keep redistribute from touching this name this cycle.
+                defer.add(pos.ticker)
+                debouncing.append((pos.ticker, latest_score))
+
+        if debouncing:
+            logger.info(
+                f"[score_sells] debouncing (held, no action): "
+                f"{[f'{t}={s:.1f}' for t, s in debouncing]} "
+                f"(consecutive={consecutive_n}, ma_window={ma_window})"
+            )
+
+        return signals, defer
+
     def _redistribute(
         self,
         candidates: list[ScoreResult],
@@ -169,12 +299,17 @@ class PortfolioManager:
         alpaca_map: dict[str, dict],
         portfolio_value: float,
         data: dict[str, pd.DataFrame],
-        profit_sold_tickers: set[str],
+        already_handled: set[str],
     ) -> list[Signal]:
-        """Step 2: Redistribute capital proportionally by score.
+        """Step 3: Redistribute capital proportionally by score.
 
-        Allocates purchase_power_pct of portfolio value across qualifying stocks.
-        Generates buy/sell signals to reach target quantities.
+        Allocates purchase_power_pct of portfolio value across qualifying
+        stocks. Generates buy/sell signals to reach target quantities.
+
+        `already_handled` is the union of tickers being sold in earlier
+        steps (profit_based_sells, score_based_sells) and those held mid-
+        debounce in score_based_sells. None of those participate in
+        redistribution this cycle.
         """
         buy_threshold = self._get_effective_param("buy_threshold", 60)
         purchase_power_pct = self.tc.get("purchase_power_pct", 0.50)
@@ -206,21 +341,18 @@ class PortfolioManager:
 
         # Get tickers on cooldown from prior profit/loss sells
         cooldown_tickers = self.db.get_recently_profit_sold(cooldown_hours)
-        # Also exclude tickers being sold this cycle
-        excluded = profit_sold_tickers | cooldown_tickers
+        # Also exclude tickers already handled by earlier steps (sold this
+        # cycle or held mid-debounce in _score_based_sells).
+        excluded = already_handled | cooldown_tickers
         if cooldown_tickers:
             logger.info(f"[redistribute] cooldown active: {sorted(cooldown_tickers)}")
 
         # Build score lookup
         score_map = {c.ticker: c.composite for c in candidates}
 
-        # Tickers we currently hold (excluding those being sold this cycle).
-        # Held positions with score >= sell_threshold are included in the
-        # qualifying set so they participate in proportional allocation
-        # rather than free-riding outside the redistribution budget.
-        held_tickers = {
-            p.ticker for p in positions if p.ticker not in profit_sold_tickers
-        }
+        # Tickers we currently hold that are still eligible for redistribution
+        # this cycle (i.e. not sold or debounce-held by earlier steps).
+        held_tickers = {p.ticker for p in positions if p.ticker not in excluded}
 
         # Filter qualifying candidates: above buy_threshold (new entries OK),
         # or currently held and still above sell_threshold (hysteresis).
@@ -247,17 +379,10 @@ class PortfolioManager:
 
         if not qualifying:
             logger.info(
-                "[redistribute] no qualifying candidates; "
-                "checking held positions for non-qualifying sells"
+                "[redistribute] no qualifying candidates — nothing to do "
+                "(score-based sells already handled in step 2)"
             )
-            # Sell all held positions that aren't being sold in step 1
-            # v2: respect sell_threshold hysteresis
-            return self._sell_non_qualifying(
-                positions,
-                profit_sold_tickers,
-                score_map,
-                sell_threshold,
-            )
+            return []
 
         # Calculate proportional allocation
         total_score = sum(c.composite for c in qualifying)
@@ -265,11 +390,10 @@ class PortfolioManager:
         # Build current holdings map (qty from Alpaca for accuracy)
         held_map = {}
         for pos in positions:
-            if pos.ticker not in profit_sold_tickers:
+            if pos.ticker not in excluded:
                 live = alpaca_map.get(pos.ticker)
                 held_map[pos.ticker] = live["qty"] if live else pos.qty
 
-        qualifying_tickers = {c.ticker for c in qualifying}
         signals = []
         stats = {
             "buy": 0,
@@ -279,8 +403,6 @@ class PortfolioManager:
             "skip_min_hold": 0,
             "skip_no_price": 0,
             "skip_no_score": 0,
-            "no_longer_qualifies": 0,
-            "held_above_sell_threshold": 0,
         }
         planned_target = 0.0  # sum of target_qty * price across qualifying
         planned_buy_cost = 0.0
@@ -430,100 +552,19 @@ class PortfolioManager:
                 stats["hold_in_band"] += 1
                 logger.info(f"{base} → hold (already at target)")
 
-        # Sell positions that no longer qualify
-        for pos in positions:
-            if (
-                pos.ticker not in qualifying_tickers
-                and pos.ticker not in profit_sold_tickers
-            ):
-                # No fresh score this cycle (data fetch dropped this ticker) →
-                # defer the decision rather than treating absence as score=0.
-                if pos.ticker not in score_map:
-                    stats["skip_no_score"] += 1
-                    logger.info(
-                        f"[redistribute] {pos.ticker} no fresh score this cycle "
-                        f"→ skip: no_score (defer no_longer_qualifies decision)"
-                    )
-                    continue
-                ticker_score = score_map[pos.ticker]
-                live = alpaca_map.get(pos.ticker)
-                price = live["current_price"] if live else 0.0
-                pos_value = pos.qty * price
-                # v2: only sell if score dropped below sell_threshold (hysteresis)
-                if ticker_score >= sell_threshold:
-                    stats["held_above_sell_threshold"] += 1
-                    logger.info(
-                        f"[redistribute] {pos.ticker} score={ticker_score:.1f} "
-                        f"below buy_threshold but above sell_threshold "
-                        f"({sell_threshold}) → hold"
-                    )
-                    continue
-                planned_sell_value += pos_value
-                stats["no_longer_qualifies"] += 1
-                logger.info(
-                    f"[redistribute] {pos.ticker} score={ticker_score:.1f} "
-                    f"qty={pos.qty} (~${pos_value:,.2f}) → "
-                    f"SELL: no_longer_qualifies (score<{sell_threshold})"
-                )
-                signals.append(
-                    Signal(
-                        ticker=pos.ticker,
-                        action="sell",
-                        reason="no_longer_qualifies",
-                        score=0,
-                        suggested_qty=pos.qty,
-                    )
-                )
-
         rounding_gap = max(0.0, available_capital - planned_target)
         gap_pct = (rounding_gap / available_capital) if available_capital > 0 else 0.0
-        total_sells = stats["sell_reduce"] + stats["no_longer_qualifies"]
         logger.info(
             f"[redistribute] summary: "
             f"buys={stats['buy']} (~${planned_buy_cost:,.2f}) "
-            f"sells={total_sells} (~${planned_sell_value:,.2f}) | "
+            f"sell_reduce={stats['sell_reduce']} (~${planned_sell_value:,.2f}) | "
             f"skip_min_share_diff={stats['skip_min_share_diff']} "
             f"skip_min_hold={stats['skip_min_hold']} "
-            f"skip_no_score={stats['skip_no_score']} "
-            f"hold_in_band={stats['hold_in_band']} "
-            f"held_above_sell_threshold={stats['held_above_sell_threshold']} | "
+            f"skip_no_price={stats['skip_no_price']} "
+            f"hold_in_band={stats['hold_in_band']} | "
             f"available=${available_capital:,.2f} "
             f"planned_deployed=${planned_target:,.2f} "
             f"rounding_gap=${rounding_gap:,.2f} ({gap_pct:.1%} of available)"
         )
 
-        return signals
-
-    def _sell_non_qualifying(
-        self,
-        positions: list[Position],
-        already_sold: set[str],
-        score_map: dict[str, float] = None,
-        sell_threshold: float = 0,
-    ) -> list[Signal]:
-        """Sell all held positions that aren't already being sold."""
-        signals = []
-        for pos in positions:
-            if pos.ticker not in already_sold:
-                # v2: respect hysteresis — keep if score still above sell_threshold
-                if score_map and sell_threshold > 0:
-                    # No fresh score this cycle → defer rather than sell on absence
-                    if pos.ticker not in score_map:
-                        logger.info(
-                            f"[sell_non_qualifying] {pos.ticker} no fresh score "
-                            f"this cycle → skip"
-                        )
-                        continue
-                    ticker_score = score_map[pos.ticker]
-                    if ticker_score >= sell_threshold:
-                        continue
-                signals.append(
-                    Signal(
-                        ticker=pos.ticker,
-                        action="sell",
-                        reason="no_longer_qualifies",
-                        score=0,
-                        suggested_qty=pos.qty,
-                    )
-                )
         return signals

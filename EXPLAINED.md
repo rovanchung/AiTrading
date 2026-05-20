@@ -230,7 +230,10 @@ Held positions still above `v2_sell_threshold` are kept inside the qualifying se
 
 **V2-strategy extras** (V2, V3, V4):
 - **Hysteresis**: A position is only sold for "no longer qualifies" if its score drops below `trading.v2_sell_threshold` (rather than `trading.buy_threshold`). Per-account overrides — e.g. `accounts.v4.account_overrides.v4_2` — can tighten or loosen this. The buffer prevents churn when scores oscillate near the threshold. Note: the macro overlay shifts the **buy** threshold but leaves this sell threshold fixed.
+- **Score-sell debounce** (`trading.v2_no_longer_qualifies_consecutive` and `…_ma_window`): Optional gates that smooth out single-cycle score blips. Each is `0` (disabled) by default — when both are disabled, a single sub-threshold score triggers the sell, matching prior behavior. When either is set, the sell only fires if at least one enabled rule is satisfied: `consecutive=N` requires N consecutive sub-threshold scores; `ma_window=M` requires the moving average over the last M scores to be sub-threshold. Until that condition is met, the position is **held as-is** — redistribute does not buy more and does not sell down partial quantities. Example: V3 sets `v2_no_longer_qualifies_consecutive: 4`, so a one-minute dip to 63 against `v2_sell_threshold: 65` will not exit a position unless the sub-threshold reading repeats for four cycles in a row.
 - **Min share-diff rebalance floor** (`trading.v2_rebalance_min_share_diff`): Rebalance trades skip if `|target$ − current$| / price ≤ N` shares — don't trade for sub-share adjustments. Per-stock, not per-portfolio.
+
+Evaluation runs three steps in order: **(1)** price-based sells (`profit_take` / `loss_cut`), **(2)** score-based sells (`no_longer_qualifies`, with optional debounce), then **(3)** redistribution. Step 2 runs before step 3 so a name being exited (or debounced) does not also receive a top-up in the same cycle.
 
 ---
 

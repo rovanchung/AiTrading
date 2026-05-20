@@ -7,6 +7,13 @@ trading:
   # observed price on the most recent prior date in daily_holding_prices.
   profit_take_vs_prior_close_pct: 0.0
   loss_cut_vs_prior_close_pct: 0.0
+  # no_longer_qualifies debounce (v1 path). 0 disables that rule; if both
+  # are 0, behavior falls back to single-data-point trigger. If either is
+  # set, EITHER rule meeting its condition triggers the sell:
+  #   - consecutive: require N consecutive sub-threshold scores
+  #   - ma_window:   sell if the avg of the last M scores is below threshold
+  no_longer_qualifies_consecutive: 0
+  no_longer_qualifies_ma_window: 0
   purchase_power_pct: 0.75      # 50% of portfolio value for redistribution
   cooldown_hours: 8             # hours before re-buying a profit/loss sold ticker
   paper_trading: true
@@ -21,6 +28,9 @@ trading:
   v2_loss_cut_vs_prior_close_pct: 0.0
   v2_min_hold_minutes: 30       # don't sell until held for this long
   v2_sell_threshold: 58         # score must drop below this to trigger no_longer_qualifies
+  # no_longer_qualifies debounce (v2 path). See top-level notes above.
+  v2_no_longer_qualifies_consecutive: 0
+  v2_no_longer_qualifies_ma_window: 0
   v2_rebalance_min_share_diff: 1.0  # skip redistribution trades unless |target$-current$|/price > this many shares
 
 scoring:
@@ -85,6 +95,7 @@ accounts:
     v2_loss_cut_vs_prior_close_pct: 0.02
     v2_min_hold_minutes: 0
     v2_sell_threshold: 65
+    v2_no_longer_qualifies_consecutive: 4   # debounce score-based exits
   v4:
     database_path: "data/trading_v4.db"
     strategy_version: "v2"

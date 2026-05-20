@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS scores (
     details TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_scores_ticker_scored_at
+    ON scores(ticker, scored_at DESC);
+
 CREATE TABLE IF NOT EXISTS positions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT,
@@ -206,6 +209,19 @@ class Database:
             ),
         )
         self.conn.commit()
+
+    def get_recent_composite_scores(self, ticker: str, limit: int) -> list[float]:
+        """Return the last `limit` composite scores for ticker, newest first.
+        Used by the no_longer_qualifies debouncing logic in PortfolioManager."""
+        if limit <= 0:
+            return []
+        rows = self.conn.execute(
+            """SELECT composite_score FROM scores
+               WHERE ticker = ?
+               ORDER BY scored_at DESC LIMIT ?""",
+            (ticker, limit),
+        ).fetchall()
+        return [float(r["composite_score"]) for r in rows]
 
     def get_latest_score(self, ticker: str) -> Optional[ScoreResult]:
         row = self.conn.execute(
