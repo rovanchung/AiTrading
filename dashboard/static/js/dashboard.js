@@ -196,12 +196,68 @@ const DT_DEFAULTS = {
     },
 };
 
+// --- Multi-column row split -------------------------------------------------
+// Tables marked `data-split="true"` will visually continue their rows in
+// sibling clone tables when the card has horizontal room, separated by a
+// vertical split line. Original tbody rows get .split-hidden so DataTables
+// pagination/sort still see them; clones are append-only DOM we manage.
+
+function shouldSplit(tableEl) {
+    return !!(tableEl && tableEl.dataset && tableEl.dataset.split === 'true');
+}
+
+function teardownSplit($table) {
+    const $wrapper = $table.closest('.dataTables_wrapper, .dt-container');
+    $wrapper.find('table.table-clone').remove();
+    $table.find('tbody > tr.split-hidden').removeClass('split-hidden');
+    const $parent = $table.parent();
+    if ($parent.hasClass('table-cols')) $table.unwrap();
+}
+
+function applySplit($table, numCols) {
+    if (numCols <= 1) { teardownSplit($table); return; }
+    if (!$table.parent().hasClass('table-cols')) {
+        $table.wrap('<div class="table-cols"></div>');
+    }
+    const $cols = $table.parent();
+    $cols.find('table.table-clone').remove();
+
+    const rows = $table.find('tbody > tr').get();
+    const rowCount = rows.length;
+    if (rowCount === 0) return;
+    const perCol = Math.ceil(rowCount / numCols);
+
+    for (let c = 1; c < numCols; c++) {
+        const start = c * perCol;
+        const end = Math.min(start + perCol, rowCount);
+        if (start >= end) break;
+        const $clone = $table.clone(false, true);
+        $clone.removeAttr('id').addClass('table-clone');
+        const cloneTbody = $clone.find('tbody').empty()[0];
+        for (let i = start; i < end; i++) {
+            const r = rows[i].cloneNode(true);
+            r.classList.remove('split-hidden');
+            cloneTbody.appendChild(r);
+        }
+        $cols.append($clone);
+    }
+
+    rows.forEach((r, i) => {
+        r.classList.toggle('split-hidden', i >= perCol);
+    });
+}
+
 // Measure each DataTable's actual rendered position and set pageLength so
-// the widget fits within the viewport vertically. Row navigation is via
-// DataTables pagination.
+// the widget fits within the viewport vertically. For data-split tables we
+// also compute how many columns fit horizontally and multiply pageLength so
+// each visual column has the same vertical row capacity.
 function fitDataTableToViewport(api, depth) {
+    depth = depth || 0;
     const tableEl = api.table().node();
     if (!tableEl) return;
+    const $table = $(tableEl);
+    teardownSplit($table);
+
     const tbody = tableEl.tBodies[0];
     if (!tbody) return;
     const rowCount = tbody.rows.length;
@@ -213,18 +269,40 @@ function fitDataTableToViewport(api, depth) {
     const bottomMargin = 16;
     const rowH = tbodyRect.height / rowCount;
     if (!isFinite(rowH) || rowH <= 0) return;
+
+    let numCols = 1;
+    if (shouldSplit(tableEl)) {
+        const tableWidth = tableEl.getBoundingClientRect().width;
+        const $card = $table.closest('.card');
+        const $cardParent = $card.parent();
+        if (tableWidth > 0 && $cardParent.length) {
+            const parentWidth = $cardParent[0].clientWidth;
+            const cardPadX = parseFloat($card.css('padding-left')) + parseFloat($card.css('padding-right'));
+            const usableWidth = parentWidth - cardPadX;
+            const gap = 24;
+            const totalRecs = api.rows().count();
+            numCols = Math.max(1, Math.floor((usableWidth + gap) / (tableWidth + gap)));
+            if (totalRecs > 0) numCols = Math.min(numCols, totalRecs);
+        }
+    }
+    $(wrapperEl).data('split-cols', numCols);
+
     const availableForRows = window.innerHeight - tbodyRect.top - belowChrome - bottomMargin;
-    const newLen = Math.max(3, Math.floor(availableForRows / rowH));
+    const rowsPerCol = Math.max(3, Math.floor(availableForRows / rowH));
+    const newLen = rowsPerCol * numCols;
+
     if (api.page.len() === newLen) {
-        if (wrapperRect.bottom > window.innerHeight && newLen > 3 && (depth || 0) < 5) {
-            api.page.len(newLen - 1).draw(false);
-            requestAnimationFrame(() => fitDataTableToViewport(api, (depth || 0) + 1));
+        if (numCols > 1) applySplit($table, numCols);
+        const finalRect = wrapperEl.getBoundingClientRect();
+        if (finalRect.bottom > window.innerHeight && rowsPerCol > 3 && depth < 5) {
+            api.page.len((rowsPerCol - 1) * numCols).draw(false);
+            requestAnimationFrame(() => fitDataTableToViewport(api, depth + 1));
         }
         return;
     }
     api.page.len(newLen).draw(false);
-    if ((depth || 0) < 3) {
-        requestAnimationFrame(() => fitDataTableToViewport(api, (depth || 0) + 1));
+    if (depth < 5) {
+        requestAnimationFrame(() => fitDataTableToViewport(api, depth + 1));
     }
 }
 
@@ -242,6 +320,17 @@ $(function() {
         $(document).on('init.dt', function(e, settings) {
             const api = new $.fn.dataTable.Api(settings);
             requestAnimationFrame(() => fitDataTableToViewport(api));
+        });
+        // Pagination/sort/search redraws the original tbody but leaves
+        // our clone tables with stale rows. Re-apply the split with the
+        // numCols decided by the most recent fit pass.
+        $(document).on('draw.dt', function(e, settings) {
+            const tableEl = settings.nTable;
+            if (!shouldSplit(tableEl)) return;
+            const $table = $(tableEl);
+            const $wrapper = $table.closest('.dataTables_wrapper, .dt-container');
+            const numCols = parseInt($wrapper.data('split-cols') || '1', 10) || 1;
+            applySplit($table, numCols);
         });
     }
     setTimeout(fitAllDataTables, 0);
