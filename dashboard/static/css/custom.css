@@ -109,6 +109,12 @@ table.dataTable tbody tr.even:hover { background: #1e293b !important; }
     border-radius: 0.75rem;
     padding: 1.25rem;
 }
+/* Cards wrapping a table shrink to the table's width instead of spanning
+   the full container, so the blue block hugs the data. */
+.card:has(table) {
+    width: fit-content;
+    max-width: 100%;
+}
 .card-header {
     font-size: 0.75rem;
     text-transform: uppercase;
