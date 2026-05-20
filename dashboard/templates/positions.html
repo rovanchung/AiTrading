@@ -2,7 +2,37 @@
 {% block title %}Positions{% endblock %}
 {% block page_title %}Positions{% endblock %}
 
+{% macro score_cell(value, at, kind, ticker) %}
+    {% if value is none %}
+        <span class="text-gray-600">—</span>
+    {% else %}
+        <span class="score-hover {{ value | score_color }} cursor-help font-medium underline decoration-dotted decoration-gray-700 underline-offset-2"
+              data-score-at="{{ at or '' }}"
+              data-score-kind="{{ kind }}"
+              data-score-ticker="{{ ticker }}"
+              data-score-value="{{ '%.1f' | format(value) }}">
+            {{ "%.1f" | format(value) }}
+        </span>
+    {% endif %}
+{% endmacro %}
+
 {% block content %}
+<!-- Time range filter -->
+<div class="flex items-center gap-2 mb-4">
+    <span class="text-xs uppercase tracking-wider text-gray-500 mr-1">Range</span>
+    {% for key, label, _days in range_options %}
+        <a href="?range={{ key }}"
+           class="px-3 py-1 rounded-full text-xs font-medium border transition
+                  {% if active_range == key %}
+                      bg-blue-500/20 text-blue-400 border-blue-500/40
+                  {% else %}
+                      bg-gray-800/40 text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600
+                  {% endif %}">
+            {{ label }}
+        </a>
+    {% endfor %}
+</div>
+
 <!-- Tabs -->
 <div class="flex gap-1 mb-6 border-b border-gray-800">
     <button class="tab-btn active" onclick="showTab('open', this)">
@@ -22,12 +52,12 @@
                     <th>Ticker</th>
                     <th>Sector</th>
                     <th>Qty</th>
-                    <th>Entry Price</th>
-                    <th>Entry Time</th>
-                    <th>Stop Loss</th>
-                    <th>Take Profit</th>
-                    <th>High Water</th>
-                    <th>Cost Basis</th>
+                    <th>Avg Entry Score</th>
+                    <th>Current Score</th>
+                    <th>Avg Price</th>
+                    <th>Current Price</th>
+                    <th>P/L $</th>
+                    <th>P/L %</th>
                 </tr>
             </thead>
             <tbody>
@@ -38,16 +68,23 @@
                     </td>
                     <td class="text-gray-500">{{ p.sector }}</td>
                     <td class="text-right">{{ p.qty }}</td>
+                    <td class="text-right">{{ score_cell(p.entry_score, p.entry_time, 'entry', p.ticker) }}</td>
+                    <td class="text-right">{{ score_cell(p.current_score, p.current_score_at, 'current', p.ticker) }}</td>
                     <td class="text-right">{{ p.entry_price | currency }}</td>
-                    <td class="text-gray-500">{{ p.entry_time | shortdate }}</td>
-                    <td class="text-right text-red-400/70">{{ p.stop_loss | currency }}</td>
-                    <td class="text-right text-emerald-400/70">{{ p.take_profit | currency }}</td>
-                    <td class="text-right text-gray-300">{{ p.high_water_mark | currency }}</td>
-                    <td class="text-right text-gray-300">{{ (p.qty * p.entry_price) | currency }}</td>
+                    <td class="text-right">{% if p.current_price is not none %}{{ p.current_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                    <td class="text-right font-medium {{ p.pnl_value | pnl_color }}">
+                        {% if p.pnl_value is not none %}{{ p.pnl_value | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}
+                    </td>
+                    <td class="text-right font-medium {{ p.pnl_value | pnl_color }}">
+                        {% if p.pnl_pct is not none %}{{ p.pnl_pct | pct }}{% else %}<span class="text-gray-600">—</span>{% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% if not open_positions %}
+        <p class="text-gray-500 text-center py-12">No open positions in this range.</p>
+        {% endif %}
     </div>
 </div>
 
@@ -62,6 +99,8 @@
                     <th>Qty</th>
                     <th>Entry</th>
                     <th>Exit</th>
+                    <th>Entry Score</th>
+                    <th>Exit Score</th>
                     <th>P&L ($)</th>
                     <th>P&L (%)</th>
                     <th>Exit Reason</th>
@@ -80,6 +119,8 @@
                     <td class="text-right">{{ p.qty }}</td>
                     <td class="text-right">{{ p.entry_price | currency }}</td>
                     <td class="text-right">{{ p.exit_price | currency }}</td>
+                    <td class="text-right">{{ score_cell(p.entry_score, p.entry_time, 'entry', p.ticker) }}</td>
+                    <td class="text-right">{{ score_cell(p.exit_score, p.exit_time, 'exit', p.ticker) }}</td>
                     <td class="text-right font-medium {{ p.pnl | pnl_color }}">{{ p.pnl | currency }}</td>
                     <td class="text-right font-medium {{ p.pnl | pnl_color }}">{{ pnl_pct | pct }}</td>
                     <td>
@@ -93,15 +134,27 @@
                 {% endfor %}
             </tbody>
         </table>
+        {% if not closed_positions %}
+        <p class="text-gray-500 text-center py-12">No closed positions in this range.</p>
+        {% endif %}
     </div>
+</div>
+
+<!-- Peer-scores tooltip -->
+<div id="peerTooltip" class="peer-tooltip hidden">
+    <div class="peer-tooltip-header">
+        <span id="peerTooltipTitle"></span>
+        <span id="peerTooltipMeta" class="peer-tooltip-meta"></span>
+    </div>
+    <div id="peerTooltipBody" class="peer-tooltip-body">Loading…</div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 $(document).ready(function() {
-    $('#openTable').DataTable({ ...DT_DEFAULTS, order: [[4, 'desc']] });
-    $('#closedTable').DataTable({ ...DT_DEFAULTS, order: [[8, 'desc']] });
+    $('#openTable').DataTable({ ...DT_DEFAULTS, order: [[0, 'asc']] });
+    $('#closedTable').DataTable({ ...DT_DEFAULTS, order: [[11, 'desc']] });
 });
 
 function showTab(tab, btn) {
@@ -110,5 +163,121 @@ function showTab(tab, btn) {
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     btn.classList.add('active');
 }
+
+// --- Peer-score hover tooltip ---
+(function() {
+    const tooltip = document.getElementById('peerTooltip');
+    const title = document.getElementById('peerTooltipTitle');
+    const meta = document.getElementById('peerTooltipMeta');
+    const body = document.getElementById('peerTooltipBody');
+    const cache = new Map();
+
+    function cacheKey(at) { return at || '__current__'; }
+
+    async function fetchPeers(at) {
+        const key = cacheKey(at);
+        if (cache.has(key)) return cache.get(key);
+        const url = at
+            ? `/api/data/peer-scores?at=${encodeURIComponent(at)}&window_minutes=15`
+            : `/api/data/peer-scores`;
+        const promise = fetchJSON(url).catch(err => ({ data: [], error: err.message }));
+        cache.set(key, promise);
+        return promise;
+    }
+
+    function renderRows(rows, highlight) {
+        if (!rows || rows.length === 0) {
+            return '<div class="peer-tooltip-empty">No peer scores recorded near this moment.</div>';
+        }
+        const top = rows.slice(0, 50);
+        const highlightIdx = rows.findIndex(r => r.ticker === highlight);
+        const html = top.map((r, i) => {
+            const isHL = r.ticker === highlight;
+            const rank = i + 1;
+            const score = Number(r.composite_score).toFixed(1);
+            return `<div class="peer-row${isHL ? ' is-highlight' : ''}">
+                <span class="peer-rank">#${rank}</span>
+                <span class="peer-ticker">${r.ticker}</span>
+                <span class="peer-score" style="color:${scoreColor(r.composite_score)}">${score}</span>
+            </div>`;
+        }).join('');
+        let footer = '';
+        if (highlightIdx >= top.length && highlightIdx !== -1) {
+            const hl = rows[highlightIdx];
+            footer = `<div class="peer-row is-highlight peer-row-pinned">
+                <span class="peer-rank">#${highlightIdx + 1}</span>
+                <span class="peer-ticker">${hl.ticker}</span>
+                <span class="peer-score" style="color:${scoreColor(hl.composite_score)}">${Number(hl.composite_score).toFixed(1)}</span>
+            </div>`;
+        }
+        const totalNote = rows.length > top.length
+            ? `<div class="peer-tooltip-footer">Showing top ${top.length} of ${rows.length}${footer ? '' : ''}</div>`
+            : '';
+        return html + footer + totalNote;
+    }
+
+    function positionTooltip(target) {
+        const r = target.getBoundingClientRect();
+        const tt = tooltip;
+        tt.classList.remove('hidden');
+        const ttRect = tt.getBoundingClientRect();
+        let left = r.right + 8;
+        let top = r.top - 4;
+        // Flip left if it overflows the viewport
+        if (left + ttRect.width > window.innerWidth - 8) {
+            left = r.left - ttRect.width - 8;
+        }
+        if (top + ttRect.height > window.innerHeight - 8) {
+            top = window.innerHeight - ttRect.height - 8;
+        }
+        if (top < 8) top = 8;
+        tt.style.left = Math.max(8, left) + 'px';
+        tt.style.top = top + 'px';
+    }
+
+    let activeTarget = null;
+
+    document.addEventListener('mouseover', async (e) => {
+        const target = e.target.closest('.score-hover');
+        if (!target) return;
+        activeTarget = target;
+        const at = target.dataset.scoreAt || '';
+        const kind = target.dataset.scoreKind || 'current';
+        const ticker = target.dataset.scoreTicker || '';
+        const value = target.dataset.scoreValue || '';
+
+        const kindLabel = kind === 'entry' ? 'Peers at entry'
+                          : kind === 'exit' ? 'Peers at exit'
+                          : 'Latest peer ranking';
+        title.textContent = `${kindLabel}`;
+        meta.textContent = at ? at.replace('T', ' ').slice(0, 19) : 'Latest scan';
+        body.innerHTML = '<div class="peer-tooltip-loading">Loading…</div>';
+        positionTooltip(target);
+
+        const payload = await fetchPeers(at);
+        if (activeTarget !== target) return;
+        if (payload.error) {
+            body.innerHTML = `<div class="peer-tooltip-empty">Error: ${payload.error}</div>`;
+        } else {
+            body.innerHTML = renderRows(payload.data || [], ticker);
+        }
+        positionTooltip(target);
+    });
+
+    document.addEventListener('mouseout', (e) => {
+        const target = e.target.closest('.score-hover');
+        if (!target) return;
+        const related = e.relatedTarget;
+        if (related && (tooltip.contains(related) || target.contains(related))) return;
+        activeTarget = null;
+        tooltip.classList.add('hidden');
+    });
+
+    // Hide on scroll for sanity
+    document.addEventListener('scroll', () => {
+        activeTarget = null;
+        tooltip.classList.add('hidden');
+    }, true);
+})();
 </script>
 {% endblock %}

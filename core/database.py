@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS positions (
     status TEXT DEFAULT 'open',
     exit_reason TEXT,
     pnl REAL,
-    sector TEXT
+    sector TEXT,
+    entry_score REAL,
+    exit_score REAL
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -154,7 +156,16 @@ class Database:
 
     def init_schema(self):
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        """Add columns that may be missing on legacy databases."""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(positions)")}
+        if "entry_score" not in cols:
+            self.conn.execute("ALTER TABLE positions ADD COLUMN entry_score REAL")
+        if "exit_score" not in cols:
+            self.conn.execute("ALTER TABLE positions ADD COLUMN exit_score REAL")
 
     def close(self):
         self.conn.close()
@@ -244,11 +255,14 @@ class Database:
 
     # --- Positions ---
     def save_position(self, pos: Position) -> int:
+        entry_score = pos.entry_score
+        if entry_score is None:
+            entry_score = self._latest_composite(pos.ticker)
         cur = self.conn.execute(
             """INSERT INTO positions
                (ticker, qty, entry_price, entry_time, stop_loss, take_profit,
-                high_water_mark, status, sector)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                high_water_mark, status, sector, entry_score)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 pos.ticker,
                 pos.qty,
@@ -259,10 +273,22 @@ class Database:
                 pos.high_water_mark,
                 pos.status,
                 pos.sector,
+                entry_score,
             ),
         )
         self.conn.commit()
         return cur.lastrowid
+
+    def _latest_composite(self, ticker: str) -> Optional[float]:
+        """Most recent composite score recorded for `ticker`, or None."""
+        row = self.conn.execute(
+            "SELECT composite_score FROM scores WHERE ticker = ? "
+            "ORDER BY scored_at DESC LIMIT 1",
+            (ticker,),
+        ).fetchone()
+        if not row or row["composite_score"] is None:
+            return None
+        return float(row["composite_score"])
 
     def get_open_positions(self) -> list[Position]:
         rows = self.conn.execute(
@@ -298,11 +324,13 @@ class Database:
             local = local_by_ticker.get(ticker)
             if local is None:
                 sector = self.get_stock_sector(ticker)
+                entry_score = self._latest_composite(ticker)
                 self.conn.execute(
                     """INSERT INTO positions
-                       (ticker, qty, entry_price, entry_time, status, sector)
-                       VALUES (?, ?, ?, ?, 'open', ?)""",
-                    (ticker, ap["qty"], ap["avg_entry"], now, sector),
+                       (ticker, qty, entry_price, entry_time, status, sector,
+                        entry_score)
+                       VALUES (?, ?, ?, ?, 'open', ?, ?)""",
+                    (ticker, ap["qty"], ap["avg_entry"], now, sector, entry_score),
                 )
                 inserted += 1
             elif (
@@ -356,10 +384,11 @@ class Database:
         ).fetchone()
         pnl = (exit_price - entry_row["entry_price"]) * entry_row["qty"]
         now = datetime.now()
+        exit_score = self._latest_composite(entry_row["ticker"])
         self.conn.execute(
             """UPDATE positions SET exit_price=?, exit_time=?, status='closed',
-               exit_reason=?, pnl=? WHERE id=?""",
-            (exit_price, now, reason, pnl, pos_id),
+               exit_reason=?, pnl=?, exit_score=? WHERE id=?""",
+            (exit_price, now, reason, pnl, exit_score, pos_id),
         )
         # Record in trade_history
         entry_time = (
@@ -396,6 +425,7 @@ class Database:
         self.conn.commit()
 
     def _row_to_position(self, row) -> Position:
+        keys = row.keys() if hasattr(row, "keys") else []
         return Position(
             id=row["id"],
             ticker=row["ticker"],
@@ -415,6 +445,8 @@ class Database:
             exit_reason=row["exit_reason"] or "",
             pnl=row["pnl"] or 0.0,
             sector=row["sector"] or "",
+            entry_score=row["entry_score"] if "entry_score" in keys else None,
+            exit_score=row["exit_score"] if "exit_score" in keys else None,
         )
 
     def get_recent_losers(self, hours: float = 24) -> set[str]:

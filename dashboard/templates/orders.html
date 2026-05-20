@@ -3,6 +3,22 @@
 {% block page_title %}Order History{% endblock %}
 
 {% block content %}
+<!-- Time range filter -->
+<div class="flex items-center gap-2 mb-4">
+    <span class="text-xs uppercase tracking-wider text-gray-500 mr-1">Range</span>
+    {% for key, label, _days in range_options %}
+        <a href="?range={{ key }}"
+           class="px-3 py-1 rounded-full text-xs font-medium border transition
+                  {% if active_range == key %}
+                      bg-blue-500/20 text-blue-400 border-blue-500/40
+                  {% else %}
+                      bg-gray-800/40 text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600
+                  {% endif %}">
+            {{ label }}
+        </a>
+    {% endfor %}
+</div>
+
 <!-- Summary Cards -->
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
     {% set filled = orders | selectattr('status', 'equalto', 'filled') | list %}

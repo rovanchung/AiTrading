@@ -8,6 +8,7 @@ from typing import Optional
 @dataclass
 class Stock:
     """A stock in the universe."""
+
     ticker: str
     name: str = ""
     sector: str = ""
@@ -17,6 +18,7 @@ class Stock:
 @dataclass
 class ScoreResult:
     """Multi-dimensional analysis score for a stock."""
+
     ticker: str
     technical: float = 0.0
     fundamental: float = 0.0
@@ -30,6 +32,7 @@ class ScoreResult:
 @dataclass
 class Position:
     """An open or closed trading position."""
+
     id: Optional[int] = None
     ticker: str = ""
     qty: int = 0
@@ -44,6 +47,8 @@ class Position:
     exit_reason: str = ""
     pnl: float = 0.0
     sector: str = ""
+    entry_score: Optional[float] = None
+    exit_score: Optional[float] = None
 
     @property
     def hold_days(self) -> int:
@@ -65,6 +70,7 @@ class Position:
 @dataclass
 class Order:
     """A trade order."""
+
     id: Optional[int] = None
     alpaca_order_id: str = ""
     ticker: str = ""
@@ -82,6 +88,7 @@ class Order:
 @dataclass
 class Signal:
     """A buy or sell signal from the portfolio manager."""
+
     ticker: str
     action: str  # buy, sell
     reason: str = ""

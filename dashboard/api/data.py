@@ -7,8 +7,16 @@ from dashboard.db import query, query_one
 api_bp = Blueprint("api", __name__)
 
 SECTOR_COLORS = [
-    "#3b82f6", "#22c55e", "#eab308", "#ef4444", "#a855f7",
-    "#ec4899", "#06b6d4", "#f97316", "#14b8a6", "#8b5cf6",
+    "#3b82f6",
+    "#22c55e",
+    "#eab308",
+    "#ef4444",
+    "#a855f7",
+    "#ec4899",
+    "#06b6d4",
+    "#f97316",
+    "#14b8a6",
+    "#8b5cf6",
     "#64748b",
 ]
 
@@ -32,16 +40,18 @@ def overview():
     total_trades = len(closed)
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
-    return jsonify({
-        "portfolio_value": snapshot["total_value"] if snapshot else 0,
-        "cash": snapshot["cash"] if snapshot else 0,
-        "positions_value": snapshot["positions_value"] if snapshot else 0,
-        "peak_value": snapshot["peak_value"] if snapshot else 0,
-        "total_pnl": total_pnl,
-        "win_rate": win_rate,
-        "total_trades": total_trades,
-        "open_count": open_positions[0]["cnt"] if open_positions else 0,
-    })
+    return jsonify(
+        {
+            "portfolio_value": snapshot["total_value"] if snapshot else 0,
+            "cash": snapshot["cash"] if snapshot else 0,
+            "positions_value": snapshot["positions_value"] if snapshot else 0,
+            "peak_value": snapshot["peak_value"] if snapshot else 0,
+            "total_pnl": total_pnl,
+            "win_rate": win_rate,
+            "total_trades": total_trades,
+            "open_count": open_positions[0]["cnt"] if open_positions else 0,
+        }
+    )
 
 
 @api_bp.route("/portfolio-history")
@@ -51,13 +61,15 @@ def portfolio_history():
         "SELECT snapshot_time, total_value, cash, positions_value, peak_value "
         "FROM portfolio_snapshots ORDER BY snapshot_time ASC"
     )
-    return jsonify({
-        "labels": [r["snapshot_time"] for r in rows],
-        "total_value": [r["total_value"] for r in rows],
-        "cash": [r["cash"] for r in rows],
-        "positions_value": [r["positions_value"] for r in rows],
-        "peak_value": [r["peak_value"] for r in rows],
-    })
+    return jsonify(
+        {
+            "labels": [r["snapshot_time"] for r in rows],
+            "total_value": [r["total_value"] for r in rows],
+            "cash": [r["cash"] for r in rows],
+            "positions_value": [r["positions_value"] for r in rows],
+            "peak_value": [r["peak_value"] for r in rows],
+        }
+    )
 
 
 @api_bp.route("/drawdown")
@@ -86,11 +98,13 @@ def sector_allocation():
         "FROM positions WHERE status='open' AND sector != '' "
         "GROUP BY sector ORDER BY allocation DESC"
     )
-    return jsonify({
-        "labels": [r["sector"] for r in rows],
-        "values": [r["allocation"] for r in rows],
-        "colors": SECTOR_COLORS[:len(rows)],
-    })
+    return jsonify(
+        {
+            "labels": [r["sector"] for r in rows],
+            "values": [r["allocation"] for r in rows],
+            "colors": SECTOR_COLORS[: len(rows)],
+        }
+    )
 
 
 @api_bp.route("/score-radar/<ticker>")
@@ -104,17 +118,19 @@ def score_radar(ticker):
     )
     if not row:
         return jsonify({"labels": [], "values": [], "composite": 0})
-    return jsonify({
-        "labels": ["Technical", "Fundamental", "Momentum", "Sentiment"],
-        "values": [
-            row["technical_score"],
-            row["fundamental_score"],
-            row["momentum_score"],
-            row["sentiment_score"],
-        ],
-        "composite": row["composite_score"],
-        "details": json.loads(row["details"]) if row["details"] else {},
-    })
+    return jsonify(
+        {
+            "labels": ["Technical", "Fundamental", "Momentum", "Sentiment"],
+            "values": [
+                row["technical_score"],
+                row["fundamental_score"],
+                row["momentum_score"],
+                row["sentiment_score"],
+            ],
+            "composite": row["composite_score"],
+            "details": json.loads(row["details"]) if row["details"] else {},
+        }
+    )
 
 
 @api_bp.route("/price-history/<ticker>")
@@ -125,10 +141,12 @@ def price_history(ticker):
         "WHERE ticker = ? ORDER BY snapshot_time ASC",
         (ticker.upper(),),
     )
-    return jsonify({
-        "labels": [r["snapshot_time"] for r in rows],
-        "prices": [r["price"] for r in rows],
-    })
+    return jsonify(
+        {
+            "labels": [r["snapshot_time"] for r in rows],
+            "prices": [r["price"] for r in rows],
+        }
+    )
 
 
 @api_bp.route("/positions")
@@ -173,18 +191,70 @@ def orders_data():
 @api_bp.route("/fundamentals/<ticker>")
 def fundamentals_data(ticker):
     """Fundamental data for a ticker."""
-    row = query_one(
-        "SELECT * FROM fundamentals WHERE ticker = ?", (ticker.upper(),)
-    )
+    row = query_one("SELECT * FROM fundamentals WHERE ticker = ?", (ticker.upper(),))
     return jsonify(row or {})
+
+
+@api_bp.route("/peer-scores")
+def peer_scores():
+    """Composite scores of all tickers at a given moment, sorted desc.
+
+    Query params:
+        at: ISO timestamp anchoring the lookup. If omitted, returns the
+            latest score per ticker (current-moment ranking).
+        window_minutes: ± window around `at` to constrain scan-cycle scope
+            (default 10). Each ticker contributes at most one row — the
+            score whose scored_at is closest to `at` within the window.
+        highlight: optional ticker to surface explicitly in the response.
+    """
+    at = request.args.get("at")
+    highlight = (request.args.get("highlight") or "").upper().strip() or None
+    try:
+        window = int(request.args.get("window_minutes", 10))
+    except (TypeError, ValueError):
+        window = 10
+    window = max(1, min(window, 1440))
+
+    if at:
+        rows = query(
+            f"""
+            WITH ranked AS (
+                SELECT s.ticker, s.composite_score, s.scored_at,
+                       ABS(julianday(s.scored_at) - julianday(?)) AS delta,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY s.ticker
+                           ORDER BY ABS(julianday(s.scored_at) - julianday(?))
+                       ) AS rn
+                FROM scores s
+                WHERE s.scored_at BETWEEN datetime(?, '-{window} minutes')
+                                       AND datetime(?, '+{window} minutes')
+            )
+            SELECT ticker, composite_score, scored_at
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY composite_score DESC, ticker ASC
+            """,
+            (at, at, at, at),
+        )
+    else:
+        rows = query("""
+            SELECT s.ticker, s.composite_score, s.scored_at
+            FROM scores s
+            INNER JOIN (
+                SELECT ticker, MAX(scored_at) AS max_scored
+                FROM scores GROUP BY ticker
+            ) latest
+              ON s.ticker = latest.ticker AND s.scored_at = latest.max_scored
+            ORDER BY s.composite_score DESC, s.ticker ASC
+            """)
+
+    return jsonify({"at": at, "highlight": highlight, "data": rows})
 
 
 @api_bp.route("/pnl-distribution")
 def pnl_distribution():
     """Histogram of closed position P&L."""
-    rows = query(
-        "SELECT pnl FROM positions WHERE status='closed' AND pnl IS NOT NULL"
-    )
+    rows = query("SELECT pnl FROM positions WHERE status='closed' AND pnl IS NOT NULL")
     if not rows:
         return jsonify({"buckets": [], "counts": []})
 
