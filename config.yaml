@@ -91,6 +91,7 @@ accounts:
     database_path: "data/trading_v3.db"
     strategy_version: "v2"
     v2_profit_take_pct: 0.2
+    v2_profit_take_vs_prior_close_pct: 0.05
     v2_loss_cut_pct: 0.02
     v2_loss_cut_vs_prior_close_pct: 0.02
     v2_min_hold_minutes: 0
