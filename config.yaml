@@ -7,7 +7,7 @@ trading:
   # observed price on the most recent prior date in daily_holding_prices.
   profit_take_vs_prior_close_pct: 0.0
   loss_cut_vs_prior_close_pct: 0.0
-  purchase_power_pct: 0.50      # 50% of portfolio value for redistribution
+  purchase_power_pct: 0.75      # 50% of portfolio value for redistribution
   cooldown_hours: 8             # hours before re-buying a profit/loss sold ticker
   paper_trading: true
   cash_only: true                # cap buys at available cash; avoid margin borrowing
