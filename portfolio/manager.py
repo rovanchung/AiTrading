@@ -183,9 +183,15 @@ class PortfolioManager:
         if self._is_v2:
             sell_threshold = self.tc.get("v2_sell_threshold", 55)
             min_share_diff = self.tc.get("v2_rebalance_min_share_diff", 1.0)
+            profit_take_prior = self.tc.get("v2_profit_take_vs_prior_close_pct", 0.0)
+            loss_cut_prior = self.tc.get("v2_loss_cut_vs_prior_close_pct", 0.0)
         else:
             sell_threshold = buy_threshold  # no hysteresis in v1
             min_share_diff = 0.0
+            profit_take_prior = self.tc.get("profit_take_vs_prior_close_pct", 0.0)
+            loss_cut_prior = self.tc.get("loss_cut_vs_prior_close_pct", 0.0)
+
+        prior_close_enabled = profit_take_prior > 0 or loss_cut_prior > 0
 
         # Concentration caps (0 = disabled). Applied to NEW buys only:
         # - max_pct_per_position: ceiling on a single name's allocation
@@ -334,6 +340,26 @@ class PortfolioManager:
 
             if target_qty > current_qty:
                 buy_qty = target_qty - current_qty
+                # Prior-close pre-check: if today's price already trips the
+                # prior-close loss-cut / profit-take threshold, skip the buy.
+                # Otherwise we'd allocate capital this cycle and the very next
+                # _profit_based_sells pass would immediately close it.
+                if prior_close_enabled:
+                    prior_close = self.db.get_prior_close(c.ticker)
+                    if prior_close and prior_close > 0:
+                        prior_pct = (current_price - prior_close) / prior_close
+                        trips_loss = loss_cut_prior > 0 and prior_pct <= -loss_cut_prior
+                        trips_profit = (
+                            profit_take_prior > 0 and prior_pct >= profit_take_prior
+                        )
+                        if trips_loss or trips_profit:
+                            logger.info(
+                                f"{base} prior_pct={prior_pct:+.2%} → "
+                                f"skip: would trip prior-close rule on entry"
+                            )
+                            stats.setdefault("skip_prior_close_trip", 0)
+                            stats["skip_prior_close_trip"] += 1
+                            continue
                 # v2: skip if the dollar gap is worth less than min_share_diff
                 # shares at the current price (only applies when already
                 # holding — initial entries always pass)

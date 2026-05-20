@@ -2,7 +2,7 @@
 
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -289,7 +289,10 @@ class Database:
                     (ticker, ap["qty"], ap["avg_entry"], now, sector),
                 )
                 inserted += 1
-            elif local["qty"] != ap["qty"] or abs(local["entry_price"] - ap["avg_entry"]) > 0.001:
+            elif (
+                local["qty"] != ap["qty"]
+                or abs(local["entry_price"] - ap["avg_entry"]) > 0.001
+            ):
                 self.conn.execute(
                     "UPDATE positions SET qty=?, entry_price=? WHERE id=?",
                     (ap["qty"], ap["avg_entry"], local["id"]),
@@ -400,23 +403,28 @@ class Database:
 
     def get_recent_losers(self, hours: float = 24) -> set[str]:
         """Return tickers that were closed at a loss within the last N hours."""
+        # exit_time is stored from datetime.now() (local). SQLite's
+        # datetime('now') is UTC, so compute the cutoff in Python to keep
+        # both sides of the comparison in the same timezone.
+        cutoff = (datetime.now() - timedelta(hours=hours)).isoformat(sep=" ")
         rows = self.conn.execute(
             """SELECT DISTINCT ticker FROM positions
                WHERE status = 'closed' AND pnl < 0
-                 AND exit_time >= datetime('now', ? || ' hours')""",
-            (f"-{hours}",),
+                 AND exit_time >= ?""",
+            (cutoff,),
         ).fetchall()
         return {r["ticker"] for r in rows}
 
     def get_recently_profit_sold(self, hours: float = 2) -> set[str]:
         """Return tickers sold for profit/loss reasons within the last N hours.
         Does NOT include redistribution or rebalancing sells."""
+        cutoff = (datetime.now() - timedelta(hours=hours)).isoformat(sep=" ")
         rows = self.conn.execute(
             """SELECT DISTINCT ticker FROM positions
                WHERE status = 'closed'
-                 AND exit_time >= datetime('now', ? || ' hours')
+                 AND exit_time >= ?
                  AND (exit_reason LIKE 'profit_take%' OR exit_reason LIKE 'loss_cut%')""",
-            (f"-{hours}",),
+            (cutoff,),
         ).fetchall()
         return {r["ticker"] for r in rows}
 
