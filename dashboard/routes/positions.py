@@ -28,6 +28,24 @@ def _range_cutoff(range_key: str):
     return None
 
 
+def _resolve_filter(args):
+    """`hours` overrides `range` when set to a positive number.
+    Returns (cutoff_iso_or_None, active_range_or_None, active_hours_or_None)."""
+    hours_arg = (args.get("hours") or "").strip()
+    if hours_arg:
+        try:
+            h = float(hours_arg)
+        except ValueError:
+            h = 0.0
+        if h > 0:
+            cutoff = (datetime.now() - timedelta(hours=h)).isoformat(sep=" ")
+            return cutoff, None, h
+    range_key = args.get("range", "7d")
+    if range_key not in {k for k, _l, _d in RANGE_OPTIONS}:
+        range_key = "7d"
+    return _range_cutoff(range_key), range_key, None
+
+
 def _latest_prices() -> dict[str, float]:
     rows = query("""
         SELECT d.ticker, d.last_price
@@ -62,10 +80,7 @@ def _latest_scores() -> dict[str, dict]:
 
 @positions_bp.route("/")
 def index():
-    range_key = request.args.get("range", "7d")
-    if range_key not in {k for k, _l, _d in RANGE_OPTIONS}:
-        range_key = "7d"
-    cutoff = _range_cutoff(range_key)
+    cutoff, range_key, active_hours = _resolve_filter(request.args)
 
     if cutoff:
         open_positions = query(
@@ -113,4 +128,5 @@ def index():
         closed_positions=closed_positions,
         range_options=RANGE_OPTIONS,
         active_range=range_key,
+        active_hours=active_hours,
     )

@@ -18,7 +18,7 @@
 
 {% block content %}
 <!-- Time range filter -->
-<div class="flex items-center gap-2 mb-4">
+<div class="flex flex-wrap items-center gap-2 mb-4">
     <span class="text-xs uppercase tracking-wider text-gray-500 mr-1">Range</span>
     {% for key, label, _days in range_options %}
         <a href="?range={{ key }}"
@@ -31,6 +31,21 @@
             {{ label }}
         </a>
     {% endfor %}
+    <form method="GET" class="flex items-center gap-1 ml-2">
+        <span class="text-xs text-gray-500">Last</span>
+        <input type="number" name="hours" step="0.5" min="0.5"
+               value="{{ active_hours or '' }}"
+               placeholder="N"
+               class="w-16 px-2 py-1 rounded-full bg-gray-800/40 border border-gray-700 text-xs text-gray-300 focus:outline-none focus:border-blue-500 text-center">
+        <span class="text-xs text-gray-500">hr</span>
+        <button type="submit"
+                class="px-3 py-1 rounded-full text-xs font-medium border transition
+                       {% if active_hours %}
+                           bg-blue-500/20 text-blue-400 border-blue-500/40
+                       {% else %}
+                           bg-gray-800/40 text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600
+                       {% endif %}">Apply</button>
+    </form>
 </div>
 
 <!-- Tabs -->
