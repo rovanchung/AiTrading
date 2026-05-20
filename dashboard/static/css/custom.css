@@ -226,7 +226,6 @@ table.dataTable tbody tr.split-hidden { display: none !important; }
     color: #e2e8f0;
     font-size: 0.8rem;
     padding: 0.5rem 0.75rem;
-    pointer-events: none;
 }
 .peer-tooltip.hidden { display: none; }
 .peer-tooltip-header {
