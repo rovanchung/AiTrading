@@ -78,8 +78,42 @@
             <tbody>
                 {% for p in open_positions %}
                 <tr>
-                    <td>
-                        <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
+                    <td class="align-top">
+                        <div class="ticker-cell">
+                            <div class="ticker-head">
+                                <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
+                                {% if p.buy_orders and p.buy_orders | length > 1 %}
+                                <button type="button" class="ticker-expand-btn" aria-label="Show buy-order breakdown">
+                                    <span class="ticker-expand-count">{{ p.buy_orders | length }}</span>
+                                    <svg class="ticker-expand-caret" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,3.5 5,6.5 8,3.5"></polyline></svg>
+                                </button>
+                                {% endif %}
+                            </div>
+                            {% if p.buy_orders and p.buy_orders | length > 1 %}
+                            <div class="buy-detail-panel">
+                                <table class="buy-detail-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Filled</th>
+                                            <th class="text-right">Qty</th>
+                                            <th class="text-right">Price</th>
+                                            <th class="text-right">Score</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for o in p.buy_orders %}
+                                        <tr>
+                                            <td class="text-gray-500">{{ o.filled_at | shortdate }}</td>
+                                            <td class="text-right">{{ o.qty }}</td>
+                                            <td class="text-right">{% if o.filled_price is not none %}{{ o.filled_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                                            <td class="text-right">{{ score_cell(o.score_at_buy, o.score_at_buy_at, 'entry', p.ticker) }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% endif %}
+                        </div>
                     </td>
                     <td class="text-gray-500">{{ p.sector }}</td>
                     <td class="text-right">{{ p.qty }}</td>
@@ -127,8 +161,42 @@
                 {% for p in closed_positions %}
                 {% set pnl_pct = ((p.exit_price - p.entry_price) / p.entry_price * 100) if p.entry_price and p.exit_price else 0 %}
                 <tr>
-                    <td>
-                        <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
+                    <td class="align-top">
+                        <div class="ticker-cell">
+                            <div class="ticker-head">
+                                <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
+                                {% if p.buy_orders and p.buy_orders | length > 1 %}
+                                <button type="button" class="ticker-expand-btn" aria-label="Show buy-order breakdown">
+                                    <span class="ticker-expand-count">{{ p.buy_orders | length }}</span>
+                                    <svg class="ticker-expand-caret" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,3.5 5,6.5 8,3.5"></polyline></svg>
+                                </button>
+                                {% endif %}
+                            </div>
+                            {% if p.buy_orders and p.buy_orders | length > 1 %}
+                            <div class="buy-detail-panel">
+                                <table class="buy-detail-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Filled</th>
+                                            <th class="text-right">Qty</th>
+                                            <th class="text-right">Price</th>
+                                            <th class="text-right">Score</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for o in p.buy_orders %}
+                                        <tr>
+                                            <td class="text-gray-500">{{ o.filled_at | shortdate }}</td>
+                                            <td class="text-right">{{ o.qty }}</td>
+                                            <td class="text-right">{% if o.filled_price is not none %}{{ o.filled_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                                            <td class="text-right">{{ score_cell(o.score_at_buy, o.score_at_buy_at, 'entry', p.ticker) }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% endif %}
+                        </div>
                     </td>
                     <td class="text-gray-500">{{ p.sector }}</td>
                     <td class="text-right">{{ p.qty }}</td>
@@ -178,6 +246,15 @@ function showTab(tab, btn) {
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     btn.classList.add('active');
 }
+
+// --- Buy-order breakdown expand/collapse on ticker cells ---
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.ticker-expand-btn');
+    if (!btn) return;
+    e.preventDefault();
+    const cell = btn.closest('.ticker-cell');
+    if (cell) cell.classList.toggle('expanded');
+});
 
 // --- Peer-score hover tooltip ---
 (function() {

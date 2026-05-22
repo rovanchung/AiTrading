@@ -211,6 +211,55 @@ table.dataTable tbody tr.split-hidden { display: none !important; }
     width: 100%;
 }
 
+/* Expandable ticker cell with per-buy-order breakdown */
+#openTable tbody td,
+#closedTable tbody td { vertical-align: top !important; }
+.ticker-cell { display: flex; flex-direction: column; gap: 0.4rem; }
+.ticker-head { display: inline-flex; align-items: center; gap: 0.35rem; }
+.ticker-expand-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 9999px;
+    background: #1e293b;
+    color: #94a3b8;
+    font-size: 0.7rem;
+    line-height: 1;
+    border: 1px solid #334155;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.ticker-expand-btn:hover { background: #334155; color: #e2e8f0; }
+.ticker-expand-count { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ticker-expand-caret { transition: transform 0.15s; }
+.ticker-cell.expanded .ticker-expand-caret { transform: rotate(180deg); }
+.buy-detail-panel { display: none; }
+.ticker-cell.expanded .buy-detail-panel {
+    display: block;
+    background: #0b1220;
+    border: 1px solid #1e293b;
+    border-radius: 0.375rem;
+    padding: 0.35rem 0.5rem;
+}
+.buy-detail-table { width: 100%; border-collapse: collapse; }
+.buy-detail-table th,
+.buy-detail-table td {
+    padding: 0.2rem 0.5rem !important;
+    font-size: 0.72rem !important;
+    border-bottom: 1px solid #1e293b !important;
+    background: transparent !important;
+    white-space: nowrap;
+}
+.buy-detail-table thead th {
+    color: #64748b !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+.buy-detail-table tbody tr:last-child td { border-bottom: none !important; }
+.buy-detail-table tbody tr:hover { background: transparent !important; }
+
 /* Peer-score hover tooltip */
 .peer-tooltip {
     position: fixed;

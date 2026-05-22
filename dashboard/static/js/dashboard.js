@@ -209,7 +209,9 @@ function shouldSplit(tableEl) {
 function teardownSplit($table) {
     const $wrapper = $table.closest('.dataTables_wrapper, .dt-container');
     $wrapper.find('table.table-clone').remove();
-    $table.find('tbody > tr.split-hidden').removeClass('split-hidden');
+    // Scope to the outer tbody only — `find('tbody > tr')` would also match
+    // rows inside nested tables (e.g., per-ticker buy-order breakdowns).
+    $table.children('tbody').children('tr.split-hidden').removeClass('split-hidden');
     const $parent = $table.parent();
     if ($parent.hasClass('table-cols')) $table.unwrap();
 }
@@ -222,7 +224,9 @@ function applySplit($table, numCols) {
     const $cols = $table.parent();
     $cols.find('table.table-clone').remove();
 
-    const rows = $table.find('tbody > tr').get();
+    // Only the outer tbody's direct rows — nested tables inside cells must
+    // not be treated as positions.
+    const rows = $table.children('tbody').children('tr').get();
     const rowCount = rows.length;
     if (rowCount === 0) return;
     const perCol = Math.ceil(rowCount / numCols);
@@ -233,7 +237,9 @@ function applySplit($table, numCols) {
         if (start >= end) break;
         const $clone = $table.clone(false, true);
         $clone.removeAttr('id').addClass('table-clone');
-        const cloneTbody = $clone.find('tbody').empty()[0];
+        // $clone.find('tbody') would also match nested tbodies; pick the
+        // direct child to keep nested detail tables intact in cloned rows.
+        const cloneTbody = $clone.children('tbody').empty()[0];
         for (let i = start; i < end; i++) {
             const r = rows[i].cloneNode(true);
             r.classList.remove('split-hidden');

@@ -78,6 +78,55 @@ def _latest_scores() -> dict[str, dict]:
     }
 
 
+def _buy_orders_for(ticker: str, entry_time, exit_time=None) -> list[dict]:
+    """Filled buy orders for `ticker` while the position was held, each with
+    the most recent composite score recorded at or before the order's
+    submission/fill time (the score that drove that buy decision).
+    `exit_time` bounds the upper edge for closed positions; open positions
+    pass None to include everything since entry."""
+    if not entry_time:
+        return []
+    if exit_time:
+        return query(
+            """
+            SELECT o.id, o.qty, o.filled_price, o.filled_at, o.submitted_at,
+                   o.limit_price,
+                   (SELECT s.composite_score FROM scores s
+                    WHERE s.ticker = o.ticker
+                      AND s.scored_at <= COALESCE(o.submitted_at, o.filled_at)
+                    ORDER BY s.scored_at DESC LIMIT 1) AS score_at_buy,
+                   (SELECT s.scored_at FROM scores s
+                    WHERE s.ticker = o.ticker
+                      AND s.scored_at <= COALESCE(o.submitted_at, o.filled_at)
+                    ORDER BY s.scored_at DESC LIMIT 1) AS score_at_buy_at
+            FROM orders o
+            WHERE o.ticker = ? AND o.side='buy' AND o.status='filled'
+              AND o.filled_at >= ? AND o.filled_at <= ?
+            ORDER BY o.filled_at DESC
+            """,
+            (ticker, entry_time, exit_time),
+        )
+    return query(
+        """
+        SELECT o.id, o.qty, o.filled_price, o.filled_at, o.submitted_at,
+               o.limit_price,
+               (SELECT s.composite_score FROM scores s
+                WHERE s.ticker = o.ticker
+                  AND s.scored_at <= COALESCE(o.submitted_at, o.filled_at)
+                ORDER BY s.scored_at DESC LIMIT 1) AS score_at_buy,
+               (SELECT s.scored_at FROM scores s
+                WHERE s.ticker = o.ticker
+                  AND s.scored_at <= COALESCE(o.submitted_at, o.filled_at)
+                ORDER BY s.scored_at DESC LIMIT 1) AS score_at_buy_at
+        FROM orders o
+        WHERE o.ticker = ? AND o.side='buy' AND o.status='filled'
+          AND o.filled_at >= ?
+        ORDER BY o.filled_at DESC
+        """,
+        (ticker, entry_time),
+    )
+
+
 @positions_bp.route("/")
 def index():
     cutoff, range_key, active_hours = _resolve_filter(request.args)
@@ -104,7 +153,8 @@ def index():
     prices = _latest_prices()
     scores = _latest_scores()
 
-    # Decorate open positions with current price / current score / pnl
+    # Decorate open positions with current price / current score / pnl /
+    # per-buy-order breakdown
     for p in open_positions:
         cur_price = prices.get(p["ticker"])
         p["current_price"] = cur_price
@@ -121,6 +171,14 @@ def index():
         else:
             p["pnl_value"] = None
             p["pnl_pct"] = None
+        p["buy_orders"] = _buy_orders_for(p["ticker"], p.get("entry_time"))
+
+    # Per-buy-order breakdown for closed positions (bounded by exit_time so
+    # we don't pick up buys from a later re-entry of the same ticker).
+    for p in closed_positions:
+        p["buy_orders"] = _buy_orders_for(
+            p["ticker"], p.get("entry_time"), p.get("exit_time")
+        )
 
     return render_template(
         "positions.html",
