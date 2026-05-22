@@ -71,6 +71,7 @@
                     <th>Current Score</th>
                     <th>Avg Price</th>
                     <th>Current Price</th>
+                    <th>Value</th>
                     <th>P/L $</th>
                     <th>P/L %</th>
                 </tr>
@@ -121,6 +122,7 @@
                     <td class="text-right">{{ score_cell(p.current_score, p.current_score_at, 'current', p.ticker) }}</td>
                     <td class="text-right">{{ p.entry_price | currency }}</td>
                     <td class="text-right">{% if p.current_price is not none %}{{ p.current_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                    <td class="text-right">{% if p.current_price is not none and p.qty %}{{ (p.current_price * p.qty) | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
                     <td class="text-right font-medium {{ p.pnl_value | pnl_color }}">
                         {% if p.pnl_value is not none %}{{ p.pnl_value | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}
                     </td>
@@ -148,6 +150,7 @@
                     <th>Qty</th>
                     <th>Avg Price</th>
                     <th>Exit</th>
+                    <th>Value</th>
                     <th>Avg Entry Score</th>
                     <th>Exit Score</th>
                     <th>P&L ($)</th>
@@ -202,6 +205,7 @@
                     <td class="text-right">{{ p.qty }}</td>
                     <td class="text-right">{{ p.entry_price | currency }}</td>
                     <td class="text-right">{{ p.exit_price | currency }}</td>
+                    <td class="text-right">{% if p.exit_price is not none and p.qty %}{{ (p.exit_price * p.qty) | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
                     <td class="text-right">{{ score_cell(p.entry_score, p.entry_time, 'entry', p.ticker) }}</td>
                     <td class="text-right">{{ score_cell(p.exit_score, p.exit_time, 'exit', p.ticker) }}</td>
                     <td class="text-right font-medium {{ p.pnl | pnl_color }}">{{ p.pnl | currency }}</td>
@@ -237,7 +241,7 @@
 <script>
 $(document).ready(function() {
     $('#openTable').DataTable({ ...DT_DEFAULTS, order: [[0, 'asc']] });
-    $('#closedTable').DataTable({ ...DT_DEFAULTS, order: [[11, 'desc']] });
+    $('#closedTable').DataTable({ ...DT_DEFAULTS, order: [[12, 'desc']] });
 });
 
 function showTab(tab, btn) {
