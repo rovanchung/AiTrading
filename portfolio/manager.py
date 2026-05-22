@@ -2,7 +2,7 @@
 
 import logging
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 import pandas as pd
@@ -52,6 +52,7 @@ class PortfolioManager:
         account_info: dict,
         alpaca_positions: list[dict],
         data: dict[str, pd.DataFrame],
+        in_flight_buy_tickers: Optional[set[str]] = None,
     ) -> list[Signal]:
         """
         Three-step portfolio evaluation:
@@ -61,6 +62,11 @@ class PortfolioManager:
            debounced by consecutive-count and/or moving-average rules).
         3. Score-based redistribution: allocate purchase power proportionally
            by score across qualifying candidates.
+
+        `in_flight_buy_tickers` carries tickers whose prior-cycle buys were
+        just canceled (e.g. by stale-order cleanup). Redistribute treats
+        them like held positions so the hysteresis floor (sell_threshold)
+        applies when re-issuing, instead of the stricter buy_threshold.
         """
         signals = []
         portfolio_value = account_info["portfolio_value"]
@@ -91,6 +97,7 @@ class PortfolioManager:
             portfolio_value,
             data,
             profit_sold_tickers | defer_tickers,
+            in_flight_buy_tickers or set(),
         )
         signals.extend(redistribution_signals)
 
@@ -152,8 +159,13 @@ class PortfolioManager:
 
             # Prior-close triggers — only checked when avg-cost rules didn't
             # already fire, so existing behavior is unchanged when the new
-            # configs stay at 0.
-            if sell_reason is None and prior_close_enabled:
+            # configs stay at 0. Positions opened today are excluded: the
+            # "prior close" reference is yesterday's last price, which is
+            # not a meaningful baseline for a same-day entry.
+            opened_today = (
+                pos.entry_time is not None and pos.entry_time.date() == date.today()
+            )
+            if sell_reason is None and prior_close_enabled and not opened_today:
                 prior_close = self.db.get_prior_close(pos.ticker)
                 if prior_close and prior_close > 0:
                     prior_pct = (current_price - prior_close) / prior_close
@@ -300,6 +312,7 @@ class PortfolioManager:
         portfolio_value: float,
         data: dict[str, pd.DataFrame],
         already_handled: set[str],
+        in_flight_buy_tickers: set[str],
     ) -> list[Signal]:
         """Step 3: Redistribute capital proportionally by score.
 
@@ -310,6 +323,13 @@ class PortfolioManager:
         steps (profit_based_sells, score_based_sells) and those held mid-
         debounce in score_based_sells. None of those participate in
         redistribution this cycle.
+
+        `in_flight_buy_tickers` is the set of tickers whose prior-cycle
+        buys were just cancelled by stale-order cleanup. They are added
+        to `held_tickers` for the qualifying filter so the hysteresis
+        floor (sell_threshold) is used on retry — without this, a 1-tick
+        score dip below buy_threshold between submit and cancel would
+        prevent the order from ever being re-issued.
         """
         buy_threshold = self._get_effective_param("buy_threshold", 60)
         purchase_power_pct = self.tc.get("purchase_power_pct", 0.50)
@@ -351,8 +371,18 @@ class PortfolioManager:
         score_map = {c.ticker: c.composite for c in candidates}
 
         # Tickers we currently hold that are still eligible for redistribution
-        # this cycle (i.e. not sold or debounce-held by earlier steps).
+        # this cycle (i.e. not sold or debounce-held by earlier steps). Also
+        # include tickers whose prior-cycle buys were just cancelled — they
+        # represent in-flight entries the system already committed to and
+        # should keep the hysteresis floor on retry.
         held_tickers = {p.ticker for p in positions if p.ticker not in excluded}
+        in_flight_eligible = in_flight_buy_tickers - excluded
+        if in_flight_eligible:
+            held_tickers |= in_flight_eligible
+            logger.info(
+                f"[redistribute] applying hysteresis to recently-cancelled "
+                f"in-flight buys: {sorted(in_flight_eligible)}"
+            )
 
         # Filter qualifying candidates: above buy_threshold (new entries OK),
         # or currently held and still above sell_threshold (hysteresis).

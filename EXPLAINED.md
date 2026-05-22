@@ -206,7 +206,7 @@ IF move ≤ -loss_cut_prior from yesterday's close          → SELL (loss cut v
 IF held < min_hold_time                                   → SKIP (v2-strategy only)
 ```
 
-The prior-close triggers compare today's price to the last price recorded for that ticker on the most recent prior calendar date (stored in `daily_holding_prices`, upserted every cycle). They are disabled by default (config keys default to 0) and run independently of the avg-cost rules.
+The prior-close triggers compare today's price to the last price recorded for that ticker on the most recent prior calendar date (stored in `daily_holding_prices`, upserted every cycle). They are disabled by default (config keys default to 0) and run independently of the avg-cost rules. Positions opened today are exempt from prior-close triggers — yesterday's last price is not a meaningful baseline for a same-day entry.
 
 | Version | Profit target | Loss cut | Min hold |
 |---------|--------------|----------|----------|
@@ -226,7 +226,7 @@ THEN → allocate capital proportionally by score across the qualifying set
 
 50% of portfolio value is distributed across qualifying stocks. Each stock's share is proportional to its composite score. The system buys/sells shares to reach the target allocation.
 
-Held positions still above `v2_sell_threshold` are kept inside the qualifying set so they consume budget instead of riding free outside it — without this, drift names in the hysteresis band would inflate total invested above the `purchase_power_pct` target.
+Held positions still above `v2_sell_threshold` are kept inside the qualifying set so they consume budget instead of riding free outside it — without this, drift names in the hysteresis band would inflate total invested above the `purchase_power_pct` target. Tickers whose prior-cycle buys were just cancelled by stale-order cleanup are also treated as held for this filter, so a small score dip between submit and cancel cannot strand an in-flight entry.
 
 **V2-strategy extras** (V2, V3, V4):
 - **Hysteresis**: A position is only sold for "no longer qualifies" if its score drops below `trading.v2_sell_threshold` (rather than `trading.buy_threshold`). Per-account overrides — e.g. `accounts.v4.account_overrides.v4_2` — can tighten or loosen this. The buffer prevents churn when scores oscillate near the threshold. Note: the macro overlay shifts the **buy** threshold but leaves this sell threshold fixed.

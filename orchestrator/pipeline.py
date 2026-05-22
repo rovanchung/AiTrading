@@ -562,19 +562,24 @@ class TradingPipeline:
 
     def _cancel_stale_pending_orders(
         self, pending_orders: dict[str, list[dict]]
-    ) -> int:
+    ) -> tuple[int, set[str]]:
         """Cancel every leftover pending order so the next cycle can redistribute.
 
         Limit buys from a prior cycle sit with stale prices and block the current
         redistribution (the signal filter in `_atomic_evaluate_and_execute` skips
         tickers with same-side pending orders). Cancelling them up-front lets the
-        current cycle re-score and re-submit at current prices. Returns the count
-        of orders whose cancel call was accepted by Alpaca.
+        current cycle re-score and re-submit at current prices.
+
+        Returns (cancelled_count, cancelled_buy_tickers). The buy-side tickers
+        are passed back to portfolio evaluation so the hysteresis floor still
+        applies on retry — without that, a small score dip between submit and
+        cancel would orphan the entry.
         """
         if not pending_orders:
-            return 0
+            return 0, set()
 
         cancelled = 0
+        cancelled_buy_tickers: set[str] = set()
         for ticker, orders in pending_orders.items():
             for o in orders:
                 try:
@@ -584,6 +589,8 @@ class TradingPipeline:
                         f"(qty={o['qty']}) to free it for redistribution"
                     )
                     cancelled += 1
+                    if "buy" in o["side"].lower():
+                        cancelled_buy_tickers.add(ticker)
                 except Exception as e:
                     logger.warning(
                         f"Failed to cancel stale order {o['order_id']} for {ticker}: {e}"
@@ -597,7 +604,7 @@ class TradingPipeline:
             self._reconcile_pending_buys()
             self._reconcile_pending_sells()
 
-        return cancelled
+        return cancelled, cancelled_buy_tickers
 
     def _atomic_evaluate_and_execute(self, scored, data: dict):
         """Atomically get positions, evaluate signals, and execute trades.
@@ -612,7 +619,10 @@ class TradingPipeline:
             # Reconcile any drift between local positions and Alpaca's view
             # (external trades, manual UI edits, post-reset hydration).
             self.sync_local_state()
-            if self._cancel_stale_pending_orders(pending_orders) > 0:
+            cancelled_count, cancelled_buy_tickers = self._cancel_stale_pending_orders(
+                pending_orders
+            )
+            if cancelled_count > 0:
                 # Treat state as clean: cash_guard reserves no pending value and
                 # the signal filter below won't skip any ticker.
                 pending_orders = {}
@@ -659,7 +669,12 @@ class TradingPipeline:
 
             # Generate signals
             signals = self.portfolio_mgr.evaluate(
-                scored, positions, account, alpaca_positions, data
+                scored,
+                positions,
+                account,
+                alpaca_positions,
+                data,
+                in_flight_buy_tickers=cancelled_buy_tickers,
             )
             if not signals:
                 logger.info("No trading signals generated")
