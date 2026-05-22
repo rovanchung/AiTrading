@@ -70,6 +70,7 @@
                     <th>Avg Entry Score</th>
                     <th>Current Score</th>
                     <th>Avg Price</th>
+                    <th>Prior Close</th>
                     <th>Current Price</th>
                     <th>Value</th>
                     <th>P/L $</th>
@@ -121,6 +122,7 @@
                     <td class="text-right">{{ score_cell(p.entry_score, p.entry_time, 'entry', p.ticker) }}</td>
                     <td class="text-right">{{ score_cell(p.current_score, p.current_score_at, 'current', p.ticker) }}</td>
                     <td class="text-right">{{ p.entry_price | currency }}</td>
+                    <td class="text-right">{% if p.prior_close is not none %}{{ p.prior_close | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
                     <td class="text-right">{% if p.current_price is not none %}{{ p.current_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
                     <td class="text-right">{% if p.current_price is not none and p.qty %}{{ (p.current_price * p.qty) | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
                     <td class="text-right font-medium {{ p.pnl_value | pnl_color }}">

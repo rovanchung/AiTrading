@@ -82,9 +82,12 @@
                     <tr class="text-gray-500 text-xs uppercase">
                         <th class="text-left pb-2">Ticker</th>
                         <th class="text-right pb-2">Qty</th>
-                        <th class="text-right pb-2">Entry</th>
-                        <th class="text-right pb-2">Stop</th>
-                        <th class="text-right pb-2">Target</th>
+                        <th class="text-right pb-2">Avg</th>
+                        <th class="text-right pb-2">PT</th>
+                        <th class="text-right pb-2">LC</th>
+                        <th class="text-right pb-2">Prior Close</th>
+                        <th class="text-right pb-2">PT vs Prior</th>
+                        <th class="text-right pb-2">LC vs Prior</th>
                         <th class="text-right pb-2">Sector</th>
                     </tr>
                 </thead>
@@ -96,13 +99,16 @@
                         </td>
                         <td class="text-right text-gray-300">{{ p.qty }}</td>
                         <td class="text-right text-gray-300">{{ p.entry_price | currency }}</td>
-                        <td class="text-right text-red-400/70">{{ p.stop_loss | currency }}</td>
-                        <td class="text-right text-emerald-400/70">{{ p.take_profit | currency }}</td>
+                        <td class="text-right text-emerald-400/70">{% if p.profit_take_price is not none %}{{ p.profit_take_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right text-red-400/70">{% if p.loss_cut_price is not none %}{{ p.loss_cut_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right text-gray-300">{% if p.prior_close is not none %}{{ p.prior_close | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right text-emerald-400/70">{% if p.profit_take_prior_price is not none %}{{ p.profit_take_prior_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right text-red-400/70">{% if p.loss_cut_prior_price is not none %}{{ p.loss_cut_prior_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
                         <td class="text-right text-gray-500 text-xs">{{ p.sector }}</td>
                     </tr>
                     {% endfor %}
                     {% if not open_positions %}
-                    <tr><td colspan="6" class="text-center py-6 text-gray-500">No open positions</td></tr>
+                    <tr><td colspan="9" class="text-center py-6 text-gray-500">No open positions</td></tr>
                     {% endif %}
                 </tbody>
             </table>

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, render_template, request
 
-from dashboard.db import query
+from dashboard.db import prior_close_map, query
 
 positions_bp = Blueprint("positions", __name__)
 
@@ -152,12 +152,14 @@ def index():
 
     prices = _latest_prices()
     scores = _latest_scores()
+    prior_closes = prior_close_map([p["ticker"] for p in open_positions])
 
     # Decorate open positions with current price / current score / pnl /
     # per-buy-order breakdown
     for p in open_positions:
         cur_price = prices.get(p["ticker"])
         p["current_price"] = cur_price
+        p["prior_close"] = prior_closes.get(p["ticker"])
         latest = scores.get(p["ticker"])
         p["current_score"] = latest["composite_score"] if latest else None
         p["current_score_at"] = latest["scored_at"] if latest else None

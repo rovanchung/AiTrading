@@ -55,6 +55,10 @@ def create_app(db_path=None):
     # If only one version's DB exists, expose that list for the template
     app.config["AVAILABLE_VERSIONS"] = sorted(db_paths.keys())
 
+    # Stash the parsed config so routes can resolve per-version trading
+    # params (e.g. v2_profit_take_pct) without re-parsing YAML each request.
+    app.config["TRADING_CONFIG"] = cfg
+
     # Register blueprints
     app.register_blueprint(main_bp)
     app.register_blueprint(positions_bp, url_prefix="/positions")
@@ -156,6 +160,7 @@ def create_app(db_path=None):
 
 if __name__ == "__main__":
     import sys
+
     sys.path.insert(0, str(PROJECT_ROOT))
     app = create_app()
     print(f"Starting AiTrading Dashboard at http://127.0.0.1:5000")

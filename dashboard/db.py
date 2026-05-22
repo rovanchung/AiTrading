@@ -51,3 +51,26 @@ def query_one(sql, params=()):
     """Execute a read query and return a single dict or None."""
     row = get_db().execute(sql, params).fetchone()
     return dict(row) if row else None
+
+
+def prior_close_map(tickers):
+    """Most recent recorded `last_price` on a date before today, per ticker.
+    Mirrors `Database.get_prior_close` but in one query."""
+    if not tickers:
+        return {}
+    placeholders = ",".join("?" for _ in tickers)
+    rows = query(
+        f"""
+        SELECT d.ticker, d.last_price
+        FROM daily_holding_prices d
+        INNER JOIN (
+            SELECT ticker, MAX(date) AS m
+            FROM daily_holding_prices
+            WHERE date < date('now', 'localtime')
+              AND ticker IN ({placeholders})
+            GROUP BY ticker
+        ) latest ON d.ticker = latest.ticker AND d.date = latest.m
+        """,
+        tuple(tickers),
+    )
+    return {r["ticker"]: r["last_price"] for r in rows}
