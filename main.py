@@ -40,6 +40,11 @@ def main():
         "--port", type=int, default=5000, help="Dashboard port (default: 5000)"
     )
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Dashboard: auto-restart on Python file edits (Werkzeug reloader)",
+    )
+    parser.add_argument(
         "--no-macro",
         action="store_true",
         help="Disable macro overlay (use base config values)",
@@ -76,7 +81,9 @@ def main():
             f"Starting AiTrading Dashboard{ver_label} at http://127.0.0.1:{args.port}"
         )
         print(f"Database: {app.config['DB_PATH']}")
-        app.run(host="127.0.0.1", port=args.port, debug=False)
+        if args.debug:
+            print("Debug mode: auto-restart on Python edits enabled")
+        app.run(host="127.0.0.1", port=args.port, debug=args.debug)
         return
 
     # Initialize

@@ -8,7 +8,7 @@ Commands:
     ./aitrade run [--no-macro]    # Start continuous trading scheduler
     ./aitrade once [--no-macro]   # Run one full cycle and exit
     ./aitrade dry-run [--no-macro]# Scan and analyze only, no trades
-    ./aitrade dashboard [--port N]# Launch web dashboard
+    ./aitrade dashboard [--port N] [--debug]  # Launch web dashboard (--debug: auto-restart on .py edits)
     ./aitrade scan                # Show candidates that pass filters
     ./aitrade scan --analyze      # Full scoring analysis
     ./aitrade scan --tickers X Y  # Analyze specific tickers
@@ -281,6 +281,8 @@ def cmd_dashboard(args):
     for i, a in enumerate(args):
         if a == "--port" and i + 1 < len(args):
             cmd.extend(["--port", args[i + 1]])
+        elif a == "--debug":
+            cmd.append("--debug")
     os.execv(PYTHON, cmd)
 
 
@@ -292,7 +294,11 @@ def cmd_scan(args):
 
 def cmd_setup_db(_args):
     """Initialize the database (creates schema if missing; non-destructive)."""
-    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "setup_db.py")] + _version_args()
+    version_args = _version_args()
+    # When no specific version is selected, init all DBs so none fall behind on schema changes.
+    if not version_args:
+        version_args = ["--init-all"]
+    cmd = [PYTHON, os.path.join(PROJECT_ROOT, "setup_db.py")] + version_args
     subprocess.run(cmd)
 
 

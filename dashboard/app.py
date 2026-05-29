@@ -41,6 +41,9 @@ def create_app(db_path=None):
 
     app.config["DB_PATH"] = db_path
     app.config["SECRET_KEY"] = "aitrade-dashboard-local"
+    # Pick up template (.html) edits on the next request without a restart.
+    # Safe for this local, read-only dashboard; Python edits still need --debug.
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
 
     # Build version-specific DB paths
     db_paths = {}

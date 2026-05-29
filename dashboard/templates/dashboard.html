@@ -80,31 +80,31 @@
             <table class="w-full text-sm">
                 <thead>
                     <tr class="text-gray-500 text-xs uppercase">
-                        <th class="text-left pb-2">Ticker</th>
-                        <th class="text-right pb-2">Qty</th>
-                        <th class="text-right pb-2">Avg</th>
-                        <th class="text-right pb-2">PT</th>
-                        <th class="text-right pb-2">LC</th>
-                        <th class="text-right pb-2">Prior Close</th>
-                        <th class="text-right pb-2">PT vs Prior</th>
-                        <th class="text-right pb-2">LC vs Prior</th>
-                        <th class="text-right pb-2">Sector</th>
+                        <th class="text-left pr-4 pb-2">Ticker</th>
+                        <th class="text-right px-4 pb-2">Qty</th>
+                        <th class="text-right px-4 pb-2">Avg</th>
+                        <th class="text-right px-4 pb-2">PT</th>
+                        <th class="text-right px-4 pb-2">LC</th>
+                        <th class="text-right px-4 pb-2">Prior Close</th>
+                        <th class="text-right px-4 pb-2">PT vs Prior</th>
+                        <th class="text-right px-4 pb-2">LC vs Prior</th>
+                        <th class="text-right pl-4 pb-2">Sector</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for p in open_positions %}
                     <tr class="border-t border-gray-800 hover:bg-gray-900/50">
-                        <td class="py-2">
+                        <td class="py-2 pr-4">
                             <a href="/analysis/{{ p.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ p.ticker }}</a>
                         </td>
-                        <td class="text-right text-gray-300">{{ p.qty }}</td>
-                        <td class="text-right text-gray-300">{{ p.entry_price | currency }}</td>
-                        <td class="text-right text-emerald-400/70">{% if p.profit_take_price is not none %}{{ p.profit_take_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
-                        <td class="text-right text-red-400/70">{% if p.loss_cut_price is not none %}{{ p.loss_cut_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
-                        <td class="text-right text-gray-300">{% if p.prior_close is not none %}{{ p.prior_close | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
-                        <td class="text-right text-emerald-400/70">{% if p.profit_take_prior_price is not none %}{{ p.profit_take_prior_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
-                        <td class="text-right text-red-400/70">{% if p.loss_cut_prior_price is not none %}{{ p.loss_cut_prior_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
-                        <td class="text-right text-gray-500 text-xs">{{ p.sector }}</td>
+                        <td class="text-right px-4 text-gray-300">{{ p.qty }}</td>
+                        <td class="text-right px-4 text-gray-300">{{ p.entry_price | currency }}</td>
+                        <td class="text-right px-4 text-emerald-400/70">{% if p.profit_take_price is not none %}{{ p.profit_take_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right px-4 text-red-400/70">{% if p.loss_cut_price is not none %}{{ p.loss_cut_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right px-4 text-gray-300">{% if p.prior_close is not none %}{{ p.prior_close | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right px-4 text-emerald-400/70">{% if p.profit_take_prior_price is not none %}{{ p.profit_take_prior_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right px-4 text-red-400/70">{% if p.loss_cut_prior_price is not none %}{{ p.loss_cut_prior_price | currency }}{% else %}<span class="text-gray-600">—</span>{% endif %}</td>
+                        <td class="text-right pl-4 text-gray-500 text-xs">{{ p.sector }}</td>
                     </tr>
                     {% endfor %}
                     {% if not open_positions %}

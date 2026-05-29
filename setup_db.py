@@ -5,6 +5,7 @@ Usage:
     python setup_db.py                          # init default DB (data/trading.db)
     python setup_db.py --version v1             # init the per-account DB for v1..v4
     python setup_db.py --version v1 --reset     # delete the file first, then re-init
+    python setup_db.py --init-all               # non-destructively init every DB (default + all accounts)
     python setup_db.py --reset-all              # reset every per-account DB (v1..v4)
 """
 
@@ -38,24 +39,35 @@ def _init_one(version):
     db.close()
 
 
+def _all_versions():
+    import yaml
+    from pathlib import Path
+    cfg_path = Path(__file__).parent / "config.yaml"
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+    return list((cfg.get("accounts") or {}).keys())
+
+
 def main():
     args = sys.argv[1:]
     version = None
     do_reset = "--reset" in args
     do_reset_all = "--reset-all" in args
+    do_init_all = "--init-all" in args
 
     for i, a in enumerate(args):
         if a == "--version" and i + 1 < len(args):
             version = args[i + 1]
             break
 
+    if do_init_all:
+        _init_one(None)  # default trading.db
+        for ver in _all_versions():
+            _init_one(ver)
+        return
+
     if do_reset_all:
-        import yaml
-        from pathlib import Path
-        cfg_path = Path(__file__).parent / "config.yaml"
-        with open(cfg_path) as f:
-            cfg = yaml.safe_load(f)
-        for ver in (cfg.get("accounts") or {}).keys():
+        for ver in _all_versions():
             _reset_one(ver)
         return
 
