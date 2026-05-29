@@ -213,7 +213,7 @@
                     <td class="text-right font-medium {{ p.pnl | pnl_color }}">{{ p.pnl | currency }}</td>
                     <td class="text-right font-medium {{ p.pnl | pnl_color }}">{{ pnl_pct | pct }}</td>
                     <td>
-                        <span class="badge {% if 'stop' in (p.exit_reason or '') %}badge-failed{% elif 'profit' in (p.exit_reason or '') %}badge-filled{% else %}badge-closed{% endif %}">
+                        <span class="badge {% if (p.exit_reason or '').startswith('profit_take') %}badge-filled{% elif (p.exit_reason or '').startswith('loss_cut') %}badge-failed{% else %}badge-closed{% endif %}">
                             {{ p.exit_reason or '—' }}
                         </span>
                     </td>

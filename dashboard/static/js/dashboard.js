@@ -67,10 +67,81 @@ async function fetchJSON(url) {
     return resp.json();
 }
 
+// --- Timestamp parsing & date-aware time axis -----------------------------
+// Parse "YYYY-MM-DD[ HH:MM:SS[.ffffff]]" (or ISO) into a local Date.
+function parseLocalTimestamp(t) {
+    let s = String(t).replace(' ', 'T').replace(/\.\d+$/, '');
+    if (s.length === 10) s += 'T00:00:00';
+    const d = new Date(s);
+    return isNaN(d) ? null : d;
+}
+
+function fmtTime(d) {
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function fmtDate(d) {
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function fmtDateTime(d) {
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// X-axis tick callback: render HH:MM, and add a second line with the date
+// (Mon D) only on the first visible tick and whenever the day changes from
+// the previously shown tick — so a repeated date is never printed twice.
+// Pass the same raw timestamp strings used as the chart's category labels.
+function makeDateAwareTimeTicks(rawLabels) {
+    const dates = rawLabels.map(parseLocalTimestamp);
+    const sameDay = (a, b) => a && b && a.toDateString() === b.toDateString();
+    return function (value, index, ticks) {
+        const d = dates[value];
+        if (!d) return '';
+        const prev = index > 0 ? dates[ticks[index - 1].value] : null;
+        return sameDay(prev, d) ? fmtTime(d) : [fmtTime(d), fmtDate(d)];
+    };
+}
+
+// Reusable pieces for raw `new Chart(...)` time-series charts so they match
+// the createLineChart date-aware axis (date shown only when the day changes).
+function timeAxisScale(rawLabels, extra = {}) {
+    return {
+        grid: { display: false },
+        ticks: { maxTicksLimit: 10, autoSkip: true, maxRotation: 0, callback: makeDateAwareTimeTicks(rawLabels) },
+        ...extra,
+    };
+}
+function timeTooltip(rawLabels) {
+    return {
+        callbacks: {
+            title: items => {
+                const d = parseLocalTimestamp(rawLabels[items[0].dataIndex]);
+                return d ? fmtDateTime(d) : '';
+            },
+        },
+    };
+}
+
 // --- Create line chart ---
+// opts.xRawLabels: raw timestamp strings → enables the date-aware time axis
+//   (smart tick labels + full date/time tooltip titles).
+// opts.scales.{x,y}: merged over the defaults. opts.yFormat: y tick formatter.
 function createLineChart(canvasId, labels, datasets, opts = {}) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return null;
+    const { scales: optScales = {}, xRawLabels, yFormat, ...restOpts } = opts;
+
+    const xTicks = { maxTicksLimit: 10, autoSkip: true, maxRotation: 0 };
+    const tooltip = {};
+    if (xRawLabels) {
+        xTicks.callback = makeDateAwareTimeTicks(xRawLabels);
+        tooltip.callbacks = {
+            title: items => {
+                const d = parseLocalTimestamp(xRawLabels[items[0].dataIndex]);
+                return d ? fmtDateTime(d) : '';
+            },
+        };
+    }
+
     return new Chart(ctx, {
         type: 'line',
         data: { labels, datasets },
@@ -78,26 +149,24 @@ function createLineChart(canvasId, labels, datasets, opts = {}) {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
+            ...restOpts,
             plugins: {
                 legend: { display: datasets.length > 1 },
+                tooltip,
+                ...(restOpts.plugins || {}),
             },
             scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: { maxTicksLimit: 10 },
-                },
+                x: { grid: { display: false }, ticks: xTicks, ...(optScales.x || {}) },
                 y: {
                     grid: { color: '#1e293b40' },
-                    ticks: {
-                        callback: opts.yFormat || (v => formatCurrency(v)),
-                    },
+                    ticks: { callback: yFormat || (v => formatCurrency(v)) },
+                    ...(optScales.y || {}),
                 },
             },
             elements: {
                 point: { radius: 0, hoverRadius: 4 },
                 line: { tension: 0.3, borderWidth: 2 },
             },
-            ...opts,
         },
     });
 }

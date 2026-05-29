@@ -126,6 +126,21 @@ def create_app(db_path=None):
             return "text-gray-400"
         return "text-emerald-400" if value > 0 else "text-red-400"
 
+    @app.template_filter("exit_reason_color")
+    def exit_reason_color_filter(reason):
+        """Green for profit-takes, red for loss-cuts, gray otherwise.
+
+        Reasons carry a trailing "(±x.xx%)" suffix, so match on the prefix:
+        profit_take / profit_take_prior_close → green; loss_cut /
+        loss_cut_prior_close → red.
+        """
+        r = str(reason or "")
+        if r.startswith("profit_take"):
+            return "text-emerald-400"
+        if r.startswith("loss_cut"):
+            return "text-red-400"
+        return "text-gray-500"
+
     @app.template_filter("timeago")
     def timeago_filter(dt_str):
         if not dt_str:

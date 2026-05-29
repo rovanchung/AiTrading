@@ -160,12 +160,7 @@
 // Portfolio value chart
 fetchJSON('/api/data/portfolio-history').then(data => {
     if (data.labels.length === 0) return;
-    const labels = data.labels.map(t => {
-        const d = new Date(t);
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
-               d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    });
-    createLineChart('portfolioChart', labels, [
+    createLineChart('portfolioChart', data.labels, [
         {
             label: 'Total Value',
             data: data.total_value,
@@ -180,7 +175,7 @@ fetchJSON('/api/data/portfolio-history').then(data => {
             backgroundColor: 'transparent',
             borderDash: [4, 4],
         },
-    ]);
+    ], { xRawLabels: data.labels });
 }).catch(() => {});
 </script>
 {% endblock %}
