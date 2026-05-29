@@ -270,29 +270,26 @@ def peer_scores():
     return jsonify({"at": at, "highlight": highlight, "data": rows})
 
 
-@api_bp.route("/pnl-distribution")
-def pnl_distribution():
-    """Histogram of closed position P&L."""
-    rows = query("SELECT pnl FROM positions WHERE status='closed' AND pnl IS NOT NULL")
-    if not rows:
-        return jsonify({"buckets": [], "counts": []})
+@api_bp.route("/pnl-by-day")
+def pnl_by_day():
+    """Per-day realized P&L of closed trades, split into profit and loss.
 
-    pnls = [r["pnl"] for r in rows]
-    min_pnl = min(pnls)
-    max_pnl = max(pnls)
-
-    if min_pnl == max_pnl:
-        return jsonify({"buckets": [f"${min_pnl:.0f}"], "counts": [len(pnls)]})
-
-    n_buckets = min(15, len(pnls))
-    step = (max_pnl - min_pnl) / n_buckets
-    buckets = []
-    counts = []
-    for i in range(n_buckets):
-        lo = min_pnl + i * step
-        hi = lo + step
-        buckets.append(f"${lo:.0f}")
-        count = sum(1 for p in pnls if lo <= p < hi or (i == n_buckets - 1 and p == hi))
-        counts.append(count)
-
-    return jsonify({"buckets": buckets, "counts": counts})
+    Grouped by the exit date so the portfolio page can draw one green
+    (total profit) and one red (total loss) bar per day. `loss` is returned
+    as a negative number so it plots below zero.
+    """
+    rows = query(
+        "SELECT date(exit_time) AS d, "
+        "SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) AS profit, "
+        "SUM(CASE WHEN pnl < 0 THEN pnl ELSE 0 END) AS loss "
+        "FROM positions "
+        "WHERE status='closed' AND pnl IS NOT NULL AND exit_time IS NOT NULL "
+        "GROUP BY date(exit_time) ORDER BY d ASC"
+    )
+    return jsonify(
+        {
+            "labels": [r["d"] for r in rows],
+            "profit": [r["profit"] for r in rows],
+            "loss": [r["loss"] for r in rows],
+        }
+    )

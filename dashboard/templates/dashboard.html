@@ -38,7 +38,10 @@
 <!-- Portfolio Chart + Top Rankings -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
     <div class="card lg:col-span-2">
-        <div class="card-header mb-3">Portfolio Value</div>
+        <div class="flex items-center justify-between mb-3">
+            <div class="card-header mb-0">Portfolio Value</div>
+            <div id="portfolioChartSpans"></div>
+        </div>
         <div class="chart-container" style="height: 280px;">
             <canvas id="portfolioChart"></canvas>
         </div>
@@ -157,25 +160,23 @@
 
 {% block scripts %}
 <script>
-// Portfolio value chart
+// Portfolio value: Total Value (left axis) vs Cash (right axis). Each axis
+// auto-scales to (min - buffer) .. (max + buffer) over the visible window.
 fetchJSON('/api/data/portfolio-history').then(data => {
     if (data.labels.length === 0) return;
-    createLineChart('portfolioChart', data.labels, [
-        {
-            label: 'Total Value',
-            data: data.total_value,
-            borderColor: '#3b82f6',
-            backgroundColor: 'rgba(59,130,246,0.1)',
-            fill: true,
-        },
-        {
-            label: 'Cash',
-            data: data.cash,
-            borderColor: '#64748b',
-            backgroundColor: 'transparent',
-            borderDash: [4, 4],
-        },
-    ], { xRawLabels: data.labels });
+    createTimeline({
+        canvasId: 'portfolioChart',
+        controls: document.getElementById('portfolioChartSpans'),
+        labels: data.labels,
+        series: [
+            { label: 'Total Value', data: data.total_value, color: '#3b82f6', bg: 'rgba(59,130,246,0.1)', fill: true, axis: 'left' },
+            { label: 'Cash', data: data.cash, color: '#22c55e', axis: 'right' },
+        ],
+        defaultSpan: '1d',
+        leftTitle: 'Total Value', leftColor: '#3b82f6',
+        rightTitle: 'Cash', rightColor: '#22c55e',
+        rightFormat: v => formatCurrency(v),
+    });
 }).catch(() => {});
 </script>
 {% endblock %}

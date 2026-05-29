@@ -87,9 +87,15 @@ function fmtDateTime(d) {
 }
 
 // X-axis tick callback: render HH:MM, and add a second line with the date
-// (Mon D) only on the first visible tick and whenever the day changes from
-// the previously shown tick — so a repeated date is never printed twice.
-// Pass the same raw timestamp strings used as the chart's category labels.
+// (Mon D) on the first tick and whenever the day changes from the previously
+// *rendered* tick — so a repeated date is never printed twice.
+//
+// This only works because we disable Chart.js autoSkip and downsample the
+// ticks ourselves (see downsampleTicks). autoSkip generates labels over the
+// *full* tick set and hides ticks afterwards, so `ticks[index - 1]` would be
+// the 1-minute-earlier neighbour (always the same day) and the date would
+// never appear. With our own downsampling, the `ticks` array passed here is
+// exactly the rendered set, so the previous entry is the true previous label.
 function makeDateAwareTimeTicks(rawLabels) {
     const dates = rawLabels.map(parseLocalTimestamp);
     const sameDay = (a, b) => a && b && a.toDateString() === b.toDateString();
@@ -101,15 +107,29 @@ function makeDateAwareTimeTicks(rawLabels) {
     };
 }
 
-// Reusable pieces for raw `new Chart(...)` time-series charts so they match
-// the createLineChart date-aware axis (date shown only when the day changes).
-function timeAxisScale(rawLabels, extra = {}) {
+// afterBuildTicks hook: evenly thin a category axis down to ~`max` ticks so the
+// date-aware callback compares against the genuinely previous rendered tick.
+function downsampleTicks(max = 9) {
+    return function (axis) {
+        const ticks = axis.ticks;
+        if (!ticks || ticks.length <= max) return;
+        const step = Math.ceil(ticks.length / max);
+        axis.ticks = ticks.filter((_, i) => i % step === 0 || i === ticks.length - 1);
+    };
+}
+
+// Category time x-axis with the robust date-aware ticks (no autoSkip).
+function timeXScale(rawLabels, extra = {}) {
     return {
         grid: { display: false },
-        ticks: { maxTicksLimit: 10, autoSkip: true, maxRotation: 0, callback: makeDateAwareTimeTicks(rawLabels) },
+        offset: false,
+        autoSkip: false,
+        afterBuildTicks: downsampleTicks(9),
+        ticks: { maxRotation: 0, callback: makeDateAwareTimeTicks(rawLabels) },
         ...extra,
     };
 }
+
 function timeTooltip(rawLabels) {
     return {
         callbacks: {
@@ -121,6 +141,62 @@ function timeTooltip(rawLabels) {
     };
 }
 
+// --- Timespan windowing & auto axis ranges --------------------------------
+const TIMESPAN_MS = {
+    '4h': 4 * 3600e3,
+    '1d': 24 * 3600e3,
+    '1w': 7 * 24 * 3600e3,
+    '2w': 14 * 24 * 3600e3,
+    '1m': 30 * 24 * 3600e3,
+};
+
+// First index of `rawLabels` falling within `spanKey` of the most recent
+// label. 'all' (or an unknown key) keeps everything.
+function spanStartIndex(rawLabels, spanKey) {
+    const span = TIMESPAN_MS[spanKey];
+    if (!span || !rawLabels.length) return 0;
+    const times = rawLabels.map(l => { const d = parseLocalTimestamp(l); return d ? d.getTime() : NaN; });
+    let last = NaN;
+    for (let i = times.length - 1; i >= 0; i--) { if (isFinite(times[i])) { last = times[i]; break; } }
+    if (!isFinite(last)) return 0;
+    const cutoff = last - span;
+    for (let i = times.length - 1; i >= 0; i--) {
+        if (isFinite(times[i]) && times[i] < cutoff) return i + 1;
+    }
+    return 0;
+}
+
+// Auto axis bounds: [min - buffer, max + buffer] over the visible values, so
+// the top is (max + buffer) and the bottom is (min - buffer). Flat series get
+// a small symmetric pad. Returns a partial scale object to spread in.
+function axisRange(values, pad = 0.06) {
+    const nums = values.filter(v => v != null && isFinite(v));
+    if (!nums.length) return {};
+    const min = Math.min(...nums), max = Math.max(...nums);
+    if (min === max) { const d = Math.abs(min) * 0.05 || 1; return { min: min - d, max: max + d }; }
+    const buf = (max - min) * pad;
+    return { min: min - buf, max: max + buf };
+}
+
+// Render a row of timespan buttons into `el`; calls onSelect(key) on click.
+function renderSpanButtons(el, spans, defaultKey, onSelect) {
+    if (!el) return;
+    el.innerHTML = '';
+    el.classList.add('span-controls');
+    spans.forEach(key => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = key;
+        b.className = 'span-btn' + (key === defaultKey ? ' active' : '');
+        b.addEventListener('click', () => {
+            el.querySelectorAll('.span-btn').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+            onSelect(key);
+        });
+        el.appendChild(b);
+    });
+}
+
 // --- Create line chart ---
 // opts.xRawLabels: raw timestamp strings → enables the date-aware time axis
 //   (smart tick labels + full date/time tooltip titles).
@@ -130,16 +206,11 @@ function createLineChart(canvasId, labels, datasets, opts = {}) {
     if (!ctx) return null;
     const { scales: optScales = {}, xRawLabels, yFormat, ...restOpts } = opts;
 
-    const xTicks = { maxTicksLimit: 10, autoSkip: true, maxRotation: 0 };
+    let xScale = { grid: { display: false }, ticks: { maxTicksLimit: 10, autoSkip: true, maxRotation: 0 } };
     const tooltip = {};
     if (xRawLabels) {
-        xTicks.callback = makeDateAwareTimeTicks(xRawLabels);
-        tooltip.callbacks = {
-            title: items => {
-                const d = parseLocalTimestamp(xRawLabels[items[0].dataIndex]);
-                return d ? fmtDateTime(d) : '';
-            },
-        };
+        xScale = timeXScale(xRawLabels);
+        tooltip.callbacks = timeTooltip(xRawLabels).callbacks;
     }
 
     return new Chart(ctx, {
@@ -156,7 +227,7 @@ function createLineChart(canvasId, labels, datasets, opts = {}) {
                 ...(restOpts.plugins || {}),
             },
             scales: {
-                x: { grid: { display: false }, ticks: xTicks, ...(optScales.x || {}) },
+                x: { ...xScale, ...(optScales.x || {}) },
                 y: {
                     grid: { color: '#1e293b40' },
                     ticks: { callback: yFormat || (v => formatCurrency(v)) },
@@ -169,6 +240,160 @@ function createLineChart(canvasId, labels, datasets, opts = {}) {
             },
         },
     });
+}
+
+// --- Timespan-driven multi-axis time-series chart -------------------------
+// Builds a line chart with timespan buttons and optional dual y-axes. Each
+// time the window changes, every axis is re-scaled to [min - buf, max + buf]
+// over just the visible data.
+//
+// opts:
+//   canvasId      canvas element id
+//   controls      DOM element to host the span buttons (optional)
+//   labels        full raw timestamp strings (category x)
+//   series[]      { label, data[], color, bg?, fill?, dash?, axis:'left'|'right' }
+//   spans         button keys (default ['4h','1d','1w','2w','1m'])
+//   defaultSpan   initially-selected key (default '1d')
+//   leftFormat / rightFormat   y-tick formatters
+//   leftTitle / rightTitle     axis titles (shown when dual-axis)
+function createTimeline(opts) {
+    const ctx = document.getElementById(opts.canvasId);
+    if (!ctx) return null;
+    const spans = opts.spans || ['4h', '1d', '1w', '2w', '1m'];
+    const defaultSpan = opts.defaultSpan || '1d';
+    const dual = opts.series.some(s => s.axis === 'right');
+    let chart = null;
+
+    function build(spanKey) {
+        const start = spanStartIndex(opts.labels, spanKey);
+        const labels = opts.labels.slice(start);
+        const leftVals = [], rightVals = [];
+        const datasets = opts.series.map(s => {
+            const data = s.data.slice(start);
+            (s.axis === 'right' ? rightVals : leftVals).push(...data);
+            return {
+                label: s.label,
+                data,
+                borderColor: s.color,
+                backgroundColor: s.bg || 'transparent',
+                fill: s.fill || false,
+                borderDash: s.dash,
+                yAxisID: s.axis === 'right' ? 'y1' : 'y',
+                spanGaps: true,
+                tension: 0.3,
+                borderWidth: 2,
+                pointRadius: 0,
+                hoverRadius: 4,
+            };
+        });
+
+        const scales = {
+            x: timeXScale(labels),
+            y: {
+                position: 'left',
+                grid: { color: '#1e293b40' },
+                ticks: { callback: opts.leftFormat || (v => formatCurrency(v)) },
+                ...(dual && opts.leftTitle ? { title: { display: true, text: opts.leftTitle, color: opts.leftColor } } : {}),
+                ...axisRange(leftVals),
+            },
+        };
+        if (dual) {
+            scales.y1 = {
+                position: 'right',
+                grid: { drawOnChartArea: false },
+                ticks: { callback: opts.rightFormat || (v => v) },
+                ...(opts.rightTitle ? { title: { display: true, text: opts.rightTitle, color: opts.rightColor } } : {}),
+                ...axisRange(rightVals),
+            };
+        }
+
+        if (chart) chart.destroy();
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: datasets.length > 1 },
+                    tooltip: timeTooltip(labels),
+                },
+                scales,
+            },
+        });
+    }
+
+    renderSpanButtons(opts.controls, spans, defaultSpan, build);
+    build(defaultSpan);
+    return { rebuild: build, get chart() { return chart; } };
+}
+
+// --- Per-day realized P&L bars --------------------------------------------
+// Green profit bar + red loss bar per day; the two bars in a day touch
+// (barPercentage 1) with a gap between days. The window and bar width scale
+// with the selected span (1w/2w/1m).
+//
+// opts: { canvasId, controls, labels[], profit[], loss[], spans?, defaultSpan? }
+function createDayPnlChart(opts) {
+    const ctx = document.getElementById(opts.canvasId);
+    if (!ctx) return null;
+    const spans = opts.spans || ['1w', '2w', '1m'];
+    const defaultSpan = opts.defaultSpan || '1w';
+    // Wider category fill for short windows → wider bars; thinner for 1m.
+    const CAT_PCT = { '1w': 0.45, '2w': 0.6, '1m': 0.8 };
+    let chart = null;
+
+    function build(spanKey) {
+        const start = spanStartIndex(opts.labels, spanKey);
+        const labels = opts.labels.slice(start);
+        const profit = opts.profit.slice(start);
+        const loss = opts.loss.slice(start);
+
+        if (chart) chart.destroy();
+        chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Profit', data: profit, backgroundColor: 'rgba(34,197,94,0.7)', borderColor: '#22c55e', borderWidth: 1 },
+                    { label: 'Loss', data: loss, backgroundColor: 'rgba(239,68,68,0.7)', borderColor: '#ef4444', borderWidth: 1 },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                datasets: { bar: { categoryPercentage: CAT_PCT[spanKey] || 0.6, barPercentage: 1.0 } },
+                plugins: {
+                    legend: { display: true },
+                    tooltip: {
+                        callbacks: {
+                            title: items => {
+                                const d = parseLocalTimestamp(labels[items[0].dataIndex]);
+                                return d ? fmtDate(d) : labels[items[0].dataIndex];
+                            },
+                            label: c => `${c.dataset.label}: ${formatCurrency(c.parsed.y)}`,
+                        },
+                    },
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: {
+                            maxRotation: 0, autoSkip: true, maxTicksLimit: 12,
+                            callback(v) { const d = parseLocalTimestamp(labels[v]); return d ? fmtDate(d) : labels[v]; },
+                        },
+                    },
+                    y: { grid: { color: '#1e293b40' }, ticks: { callback: v => formatCurrency(v) } },
+                },
+            },
+        });
+    }
+
+    renderSpanButtons(opts.controls, spans, defaultSpan, build);
+    build(defaultSpan);
+    return { rebuild: build, get chart() { return chart; } };
 }
 
 // --- Create radar chart ---

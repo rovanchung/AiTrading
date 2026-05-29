@@ -31,19 +31,14 @@
 
 <!-- Left column -->
 <div class="space-y-4">
-    <!-- Score History (timeline) -->
+    <!-- Price & Score History (combined dual-axis timeline) -->
     <div class="card">
-        <div class="card-header mb-3">Score History</div>
-        <div class="chart-container" style="height: 260px;">
-            <canvas id="scoreHistoryChart"></canvas>
+        <div class="flex items-center justify-between mb-3">
+            <div class="card-header mb-0">Price &amp; Score History</div>
+            <div id="priceScoreSpans"></div>
         </div>
-    </div>
-
-    <!-- Price History (timeline) -->
-    <div class="card">
-        <div class="card-header mb-3">Price History</div>
-        <div class="chart-container" style="height: 260px;">
-            <canvas id="priceChart"></canvas>
+        <div class="chart-container" style="height: 300px;">
+            <canvas id="priceScoreChart"></canvas>
         </div>
     </div>
 
@@ -209,36 +204,46 @@ createRadarChart('radarChart',
     '{{ ticker }}'
 );
 
-// Score history. Pass raw timestamps so the x-axis can show the date only
-// when it changes and time (HH:MM) otherwise.
-{% if score_history %}
+// Combined price + score timeline. Price and score come from independent
+// series with different timestamps, so we merge them onto one sorted
+// category axis (nulls where a series has no point; spanGaps connects them)
+// and put price on the left $ axis, score on the right 0-100 axis.
 const scoreLabels = [{% for s in score_history %}'{{ s.scored_at }}'{% if not loop.last %},{% endif %}{% endfor %}];
-createLineChart('scoreHistoryChart', scoreLabels,
-    [{
-        label: 'Composite Score',
-        data: [{% for s in score_history %}{{ s.composite_score }}{% if not loop.last %},{% endif %}{% endfor %}],
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59,130,246,0.1)',
-        fill: true,
-    }],
-    { xRawLabels: scoreLabels, scales: { y: { min: 0, max: 100, ticks: { stepSize: 25, callback: v => v } } } }
-);
-{% endif %}
+const scoreValues = [{% for s in score_history %}{{ s.composite_score }}{% if not loop.last %},{% endif %}{% endfor %}];
 
-// Price chart — raw timestamps drive the same date-aware time axis.
 fetchJSON('/api/data/price-history/{{ ticker }}').then(data => {
-    if (data.labels.length === 0) {
-        document.getElementById('priceChart').parentElement.innerHTML =
-            '<p class="text-gray-500 text-center py-12">No price history (recorded only on days held)</p>';
+    const priceLabels = data.labels || [];
+    const priceValues = data.prices || [];
+    if (!priceLabels.length && !scoreLabels.length) {
+        document.getElementById('priceScoreChart').parentElement.innerHTML =
+            '<p class="text-gray-500 text-center py-12">No price or score history yet</p>';
         return;
     }
-    createLineChart('priceChart', data.labels, [{
-        label: 'Price',
-        data: data.prices,
-        borderColor: '#22c55e',
-        backgroundColor: 'rgba(34,197,94,0.1)',
-        fill: true,
-    }], { xRawLabels: data.labels });
+
+    // Merge both timelines onto one sorted set of labels.
+    const idx = {};
+    [...priceLabels, ...scoreLabels].forEach(l => { idx[l] = true; });
+    const labels = Object.keys(idx).sort();
+    const pos = labels.reduce((m, l, i) => (m[l] = i, m), {});
+    const price = new Array(labels.length).fill(null);
+    const score = new Array(labels.length).fill(null);
+    priceLabels.forEach((l, i) => { price[pos[l]] = priceValues[i]; });
+    scoreLabels.forEach((l, i) => { score[pos[l]] = scoreValues[i]; });
+
+    createTimeline({
+        canvasId: 'priceScoreChart',
+        controls: document.getElementById('priceScoreSpans'),
+        labels,
+        series: [
+            { label: 'Price', data: price, color: '#22c55e', bg: 'rgba(34,197,94,0.1)', fill: true, axis: 'left' },
+            { label: 'Composite Score', data: score, color: '#3b82f6', axis: 'right' },
+        ],
+        defaultSpan: '1d',
+        leftTitle: 'Price', leftColor: '#22c55e',
+        rightTitle: 'Score', rightColor: '#3b82f6',
+        leftFormat: v => formatCurrency(v),
+        rightFormat: v => Math.round(v),
+    });
 }).catch(() => {});
 </script>
 {% endif %}

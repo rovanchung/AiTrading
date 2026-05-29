@@ -330,3 +330,24 @@ table.dataTable tbody tr.split-hidden { display: none !important; }
 }
 .peer-row.is-highlight .peer-ticker { color: #93c5fd; }
 .peer-row-pinned { margin-top: 0.25rem; border-top: 1px dashed #1e293b; padding-top: 0.25rem; }
+
+/* Timespan switch buttons (timeline charts) */
+.span-controls { display: inline-flex; gap: 0.25rem; }
+.span-btn {
+    padding: 0.125rem 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #64748b;
+    background: #1e293b40;
+    border: 1px solid #1e293b;
+    border-radius: 9999px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.span-btn:hover { color: #cbd5e1; border-color: #334155; }
+.span-btn.active {
+    color: #60a5fa;
+    background: #1e40af20;
+    border-color: #1e40af60;
+}

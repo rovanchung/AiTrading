@@ -37,23 +37,36 @@
 <!-- Portfolio Value + Drawdown Charts -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
     <div class="card">
-        <div class="card-header mb-3">Portfolio Value Over Time</div>
+        <div class="flex items-center justify-between mb-3">
+            <div class="card-header mb-0">Portfolio Value Over Time</div>
+            <div id="valueChartSpans"></div>
+        </div>
         <div class="chart-container" style="height: 300px;">
             <canvas id="valueChart"></canvas>
         </div>
     </div>
     <div class="card">
-        <div class="card-header mb-3">Drawdown</div>
-        <div class="chart-container" style="height: 300px;">
+        <div class="flex items-center justify-between mb-1">
+            <div class="card-header mb-0">Drawdown</div>
+            <div id="drawdownChartSpans"></div>
+        </div>
+        <p class="text-xs text-gray-500 mb-2">
+            % decline of total value from its all-time peak. 0% = at a new high;
+            −10% = the portfolio is 10% below its highest value so far.
+        </p>
+        <div class="chart-container" style="height: 270px;">
             <canvas id="drawdownChart"></canvas>
         </div>
     </div>
 </div>
 
-<!-- Allocation + P&L Distribution -->
+<!-- Cash vs. Invested + Sector Allocation -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
     <div class="card">
-        <div class="card-header mb-3">Cash vs. Invested</div>
+        <div class="flex items-center justify-between mb-3">
+            <div class="card-header mb-0">Cash vs. Invested</div>
+            <div id="allocationChartSpans"></div>
+        </div>
         <div class="chart-container" style="height: 300px;">
             <canvas id="allocationChart"></canvas>
         </div>
@@ -72,9 +85,13 @@
     </div>
 </div>
 
-<!-- P&L Distribution -->
+<!-- Daily realized P&L -->
 <div class="card">
-    <div class="card-header mb-3">P&L Distribution (Closed Trades)</div>
+    <div class="flex items-center justify-between mb-1">
+        <div class="card-header mb-0">Daily Realized P&L (Closed Trades)</div>
+        <div id="pnlChartSpans"></div>
+    </div>
+    <p class="text-xs text-gray-500 mb-2">Total profit (green) and loss (red) per day.</p>
     <div class="chart-container" style="height: 250px;">
         <canvas id="pnlChart"></canvas>
     </div>
@@ -83,64 +100,49 @@
 
 {% block scripts %}
 <script>
-const SECTOR_COLORS = ['#3b82f6','#22c55e','#eab308','#ef4444','#a855f7','#ec4899','#06b6d4','#f97316','#14b8a6','#8b5cf6','#64748b'];
-
-// Portfolio value chart
+// Portfolio value over time — Total vs Peak (same units → single axis).
 fetchJSON('/api/data/portfolio-history').then(data => {
     if (!data.labels.length) return;
-    createLineChart('valueChart', data.labels, [
-        { label: 'Total Value', data: data.total_value, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true },
-        { label: 'Peak', data: data.peak_value, borderColor: '#64748b40', borderDash: [4,4], backgroundColor: 'transparent' },
-    ], { xRawLabels: data.labels });
+    createTimeline({
+        canvasId: 'valueChart',
+        controls: document.getElementById('valueChartSpans'),
+        labels: data.labels,
+        series: [
+            { label: 'Total Value', data: data.total_value, color: '#3b82f6', bg: 'rgba(59,130,246,0.05)', fill: true, axis: 'left' },
+            { label: 'Peak', data: data.peak_value, color: '#64748b80', dash: [4, 4], axis: 'left' },
+        ],
+        defaultSpan: '1d',
+    });
 
-    // Cash vs Invested stacked area
-    new Chart(document.getElementById('allocationChart'), {
-        type: 'line',
-        data: {
-            labels: data.labels,
-            datasets: [
-                { label: 'Invested', data: data.positions_value, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.3)', fill: true, tension: 0.3, pointRadius: 0 },
-                { label: 'Cash', data: data.cash, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', fill: true, tension: 0.3, pointRadius: 0 },
-            ],
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { tooltip: timeTooltip(data.labels) },
-            scales: {
-                x: timeAxisScale(data.labels),
-                y: { stacked: true, grid: { color: '#1e293b40' }, ticks: { callback: v => formatCurrency(v) } },
-            },
-            elements: { point: { radius: 0 } },
-        },
+    // Cash vs Invested — separate axes so cash reads on its own scale
+    // (was a stacked area, which drew cash at the total-value level).
+    createTimeline({
+        canvasId: 'allocationChart',
+        controls: document.getElementById('allocationChartSpans'),
+        labels: data.labels,
+        series: [
+            { label: 'Invested', data: data.positions_value, color: '#3b82f6', bg: 'rgba(59,130,246,0.15)', fill: true, axis: 'left' },
+            { label: 'Cash', data: data.cash, color: '#22c55e', bg: 'rgba(34,197,94,0.12)', fill: true, axis: 'right' },
+        ],
+        defaultSpan: '1d',
+        leftTitle: 'Invested', leftColor: '#3b82f6',
+        rightTitle: 'Cash', rightColor: '#22c55e',
+        rightFormat: v => formatCurrency(v),
     });
 }).catch(() => {});
 
-// Drawdown chart
+// Drawdown — single % axis, auto-ranged with buffer.
 fetchJSON('/api/data/drawdown').then(data => {
     if (!data.labels.length) return;
-    new Chart(document.getElementById('drawdownChart'), {
-        type: 'line',
-        data: {
-            labels: data.labels,
-            datasets: [{
-                label: 'Drawdown %',
-                data: data.drawdown_pct,
-                borderColor: '#ef4444',
-                backgroundColor: 'rgba(239,68,68,0.1)',
-                fill: true,
-                tension: 0.3,
-                pointRadius: 0,
-            }],
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            plugins: { tooltip: timeTooltip(data.labels) },
-            scales: {
-                x: timeAxisScale(data.labels),
-                y: { grid: { color: '#1e293b40' }, ticks: { callback: v => v.toFixed(1) + '%' } },
-            },
-        },
+    createTimeline({
+        canvasId: 'drawdownChart',
+        controls: document.getElementById('drawdownChartSpans'),
+        labels: data.labels,
+        series: [
+            { label: 'Drawdown %', data: data.drawdown_pct, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', fill: true, axis: 'left' },
+        ],
+        defaultSpan: '1d',
+        leftFormat: v => v.toFixed(1) + '%',
     });
 }).catch(() => {});
 
@@ -152,40 +154,20 @@ fetchJSON('/api/data/sector-allocation').then(data => {
 }).catch(() => {});
 {% endif %}
 
-// P&L distribution
-fetchJSON('/api/data/pnl-distribution').then(data => {
-    if (!data.buckets.length) {
+// Daily realized P&L — profit/loss bars per day.
+fetchJSON('/api/data/pnl-by-day').then(data => {
+    if (!data.labels.length) {
         document.getElementById('pnlChart').parentElement.innerHTML =
             '<p class="text-gray-500 text-center py-12">No closed trades yet</p>';
         return;
     }
-    new Chart(document.getElementById('pnlChart'), {
-        type: 'bar',
-        data: {
-            labels: data.buckets,
-            datasets: [{
-                label: 'Trades',
-                data: data.counts,
-                backgroundColor: data.buckets.map(b => {
-                    const val = parseFloat(b.replace('$','').replace(',',''));
-                    return val >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)';
-                }),
-                borderColor: data.buckets.map(b => {
-                    const val = parseFloat(b.replace('$','').replace(',',''));
-                    return val >= 0 ? '#22c55e' : '#ef4444';
-                }),
-                borderWidth: 1,
-                borderRadius: 4,
-            }],
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            scales: {
-                x: { grid: { display: false } },
-                y: { grid: { color: '#1e293b40' }, ticks: { stepSize: 1 } },
-            },
-            plugins: { legend: { display: false } },
-        },
+    createDayPnlChart({
+        canvasId: 'pnlChart',
+        controls: document.getElementById('pnlChartSpans'),
+        labels: data.labels,
+        profit: data.profit,
+        loss: data.loss,
+        defaultSpan: '1w',
     });
 }).catch(() => {});
 </script>
