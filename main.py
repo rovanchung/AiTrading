@@ -7,7 +7,7 @@ Usage:
     python main.py --dry-run                # Run one cycle without executing trades
     python main.py --no-macro               # Disable macro overlay (combine with any mode)
     python main.py --dashboard              # Launch the web dashboard
-    python main.py --version v4             # Select strategy version (v1..v4)
+    python main.py --version v4             # Select trading version (v3 or v4; required)
     python main.py --version v4 --account MAIN  # Run v4 strategy against a specific Alpaca account.
                                             # Multiple processes with the same version but
                                             # different --account values run concurrently, each
@@ -52,9 +52,9 @@ def main():
     parser.add_argument("--config", default="config.yaml", help="Config file path")
     parser.add_argument(
         "--version",
-        choices=["v1", "v2", "v3", "v4"],
+        choices=["v3", "v4"],
         default=None,
-        help="Account version (v1=original, v2=anti-churn, v3=custom, v4=no-hold)",
+        help="Trading version (v3=custom, v4=no-hold). Required except for --dashboard.",
     )
     parser.add_argument(
         "--account",
@@ -66,6 +66,11 @@ def main():
     )
     args = parser.parse_args()
 
+    # --version is required for all trading modes; only the read-only
+    # dashboard may run without one (it defaults to the first version's DB).
+    if not args.version and not args.dashboard:
+        parser.error("--version is required (choices: v3, v4)")
+
     # Activate version credentials before any Alpaca client init
     if args.version:
         activate_version(args.version, args.config, account=args.account)
@@ -74,8 +79,11 @@ def main():
     if args.dashboard:
         from dashboard.app import create_app
 
-        config = load_config(args.config, version=args.version, account=args.account)
-        app = create_app(db_path=config.db_path)
+        db_path = None
+        if args.version:
+            config = load_config(args.config, version=args.version, account=args.account)
+            db_path = config.db_path
+        app = create_app(db_path=db_path)
         ver_label = f" ({args.version})" if args.version else ""
         print(
             f"Starting AiTrading Dashboard{ver_label} at http://127.0.0.1:{args.port}"
@@ -151,8 +159,8 @@ def main():
                 eff_buy = base_buy + adj.get("buy_threshold", 0)
                 print(f"\n  Adjusted parameters:")
                 print(f"    Buy threshold: {base_buy} → {eff_buy}")
-                profit_take = config.trading.get("profit_take_pct", 0.01)
-                loss_cut = config.trading.get("loss_cut_pct", 0.005)
+                profit_take = config.trading.get("v2_profit_take_pct", 0.03)
+                loss_cut = config.trading.get("v2_loss_cut_pct", 0.02)
                 pp = config.trading.get("purchase_power_pct", 0.50)
                 print(
                     f"    Profit take: +{profit_take:.1%}  |  Loss cut: -{loss_cut:.1%}"

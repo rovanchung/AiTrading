@@ -33,9 +33,13 @@ def create_app(db_path=None):
         with open(config_file) as f:
             cfg = yaml.safe_load(f) or {}
 
-    # Resolve default DB path
+    # Resolve default DB path. There is no standalone default database — when
+    # no version is selected, fall back to the first configured version's DB.
     if db_path is None:
-        db_path = cfg.get("database", {}).get("path", "data/trading.db")
+        accts = cfg.get("accounts", {}) or {}
+        first = sorted(accts.keys())[0] if accts else None
+        db_path = (accts.get(first, {}) or {}).get("database_path") if first else None
+        db_path = db_path or "data/trading_v3.db"
     if not os.path.isabs(db_path):
         db_path = str(PROJECT_ROOT / db_path)
 
@@ -86,16 +90,9 @@ def create_app(db_path=None):
     def inject_version():
         active = session.get("dashboard_version")
         versions = app.config.get("AVAILABLE_VERSIONS", [])
-        # Determine strategy label
-        if active:
-            acct = accounts.get(active, {})
-            strategy = acct.get("strategy_version", active)
-        else:
-            strategy = None
         return {
             "active_version": active,
             "available_versions": versions,
-            "strategy_label": strategy,
         }
 
     # Template filters

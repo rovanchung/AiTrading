@@ -27,17 +27,10 @@ def _sell_trigger_prices(p: dict, params: dict, prior_close):
     """Compute the four trigger prices that the live strategy uses.
     Returns (profit_take, loss_cut, profit_take_vs_prior, loss_cut_vs_prior).
     Any pct configured as 0 yields None for that price."""
-    strategy = params.get("strategy_version", "v2")
-    if strategy == "v2":
-        pt_pct = params.get("v2_profit_take_pct", 0.0) or 0.0
-        lc_pct = params.get("v2_loss_cut_pct", 0.0) or 0.0
-        pt_prior_pct = params.get("v2_profit_take_vs_prior_close_pct", 0.0) or 0.0
-        lc_prior_pct = params.get("v2_loss_cut_vs_prior_close_pct", 0.0) or 0.0
-    else:
-        pt_pct = params.get("profit_take_pct", 0.0) or 0.0
-        lc_pct = params.get("loss_cut_pct", 0.0) or 0.0
-        pt_prior_pct = params.get("profit_take_vs_prior_close_pct", 0.0) or 0.0
-        lc_prior_pct = params.get("loss_cut_vs_prior_close_pct", 0.0) or 0.0
+    pt_pct = params.get("v2_profit_take_pct", 0.0) or 0.0
+    lc_pct = params.get("v2_loss_cut_pct", 0.0) or 0.0
+    pt_prior_pct = params.get("v2_profit_take_vs_prior_close_pct", 0.0) or 0.0
+    lc_prior_pct = params.get("v2_loss_cut_vs_prior_close_pct", 0.0) or 0.0
 
     avg = p.get("entry_price")
     pt = avg * (1 + pt_pct) if avg and pt_pct > 0 else None

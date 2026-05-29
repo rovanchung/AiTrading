@@ -195,7 +195,7 @@ Notice a pattern: **energy stocks dominate** (EOG, CTRA, COP, OKE, DVN, APA, HAL
 
 ## The Decision Logic (What Happens in Live Mode)
 
-The system runs four strategy versions (V1–V4) on separate Alpaca accounts simultaneously. All use the same two-step logic with different parameters:
+The system runs two strategy versions (V3 and V4) on separate Alpaca accounts simultaneously. Both use the same two-step logic with different parameters:
 
 ### Step 1: Profit-Based Sells (checked every 1 min)
 ```
@@ -203,16 +203,14 @@ IF P&L ≥ +profit_target from avg cost                     → SELL (profit tak
 IF P&L ≤ -loss_cut from avg cost                          → SELL (loss cut)
 IF move ≥ +profit_target_prior from yesterday's close     → SELL (profit take vs prior close)
 IF move ≤ -loss_cut_prior from yesterday's close          → SELL (loss cut vs prior close)
-IF held < min_hold_time                                   → SKIP (v2-strategy only)
+IF held < min_hold_time                                   → SKIP (when min_hold_time > 0)
 ```
 
 The prior-close triggers compare today's price to the last price recorded for that ticker on the most recent prior calendar date (stored in `daily_holding_prices`, upserted every cycle). They are disabled by default (config keys default to 0) and run independently of the avg-cost rules. Positions opened today are exempt from prior-close triggers — yesterday's last price is not a meaningful baseline for a same-day entry.
 
 | Version | Profit target | Loss cut | Min hold |
 |---------|--------------|----------|----------|
-| V1 | +1% | -0.5% | None |
-| V2 | +3% | -2% | 30 min |
-| V3 | +5% | -3% | 30 min |
+| V3 | +20% (also +5% vs prior close) | -2% (also -2% vs prior close) | None |
 | V4 | +5% | -3% | None |
 
 Sold tickers enter a **2-hour cooldown** — the system won't re-buy them immediately.
@@ -228,7 +226,7 @@ THEN → allocate capital proportionally by score across the qualifying set
 
 Held positions still above `v2_sell_threshold` are kept inside the qualifying set so they consume budget instead of riding free outside it — without this, drift names in the hysteresis band would inflate total invested above the `purchase_power_pct` target. Tickers whose prior-cycle buys were just cancelled by stale-order cleanup are also treated as held for this filter, so a small score dip between submit and cancel cannot strand an in-flight entry.
 
-**V2-strategy extras** (V2, V3, V4):
+**Anti-churn extras** (applied to V3 and V4):
 - **Hysteresis**: A position is only sold for "no longer qualifies" if its score drops below `trading.v2_sell_threshold` (rather than `trading.buy_threshold`). Per-account overrides — e.g. `accounts.v4.account_overrides.v4_2` — can tighten or loosen this. The buffer prevents churn when scores oscillate near the threshold. Note: the macro overlay shifts the **buy** threshold but leaves this sell threshold fixed.
 - **Score-sell debounce** (`trading.v2_no_longer_qualifies_consecutive` and `…_ma_window`): Optional gates that smooth out single-cycle score blips. Each is `0` (disabled) by default — when both are disabled, a single sub-threshold score triggers the sell, matching prior behavior. When either is set, the sell only fires if at least one enabled rule is satisfied: `consecutive=N` requires N consecutive sub-threshold scores; `ma_window=M` requires the moving average over the last M scores to be sub-threshold. Until that condition is met, the position is **held as-is** — redistribute does not buy more and does not sell down partial quantities. Example: V3 sets `v2_no_longer_qualifies_consecutive: 4`, so a one-minute dip to 63 against `v2_sell_threshold: 65` will not exit a position unless the sub-threshold reading repeats for four cycles in a row.
 - **Min share-diff rebalance floor** (`trading.v2_rebalance_min_share_diff`): Rebalance trades skip if `|target$ − current$| / price ≤ N` shares — don't trade for sub-share adjustments. Per-stock, not per-portfolio.
@@ -241,7 +239,7 @@ Evaluation runs three steps in order: **(1)** price-based sells (`profit_take` /
 
 The system combines **trend following** (ride winners) with **risk management** (cut losers fast):
 
-1. **Profit-based sells with tight thresholds**: Even small gains compound. V1 takes profit at +1% — if you trade 10 times a day and win 60% at +1% vs lose 40% at -0.5%, expected value = 0.6 × 1% - 0.4 × 0.5% = +0.4% per trade. V3/V4 use wider bands (+5%/-3%) for fewer but larger wins.
+1. **Profit-based sells with disciplined thresholds**: Even modest gains compound. V4 takes profit at +5% and cuts losses at -3% — if you win 60% at +5% vs lose 40% at -3%, expected value = 0.6 × 5% - 0.4 × 3% = +1.8% per trade. V3 rides larger winners with a +20% profit band and a tight -2% loss cut.
 
 2. **Score-proportional allocation**: Capital flows to the highest-scoring stocks automatically. If AAPL scores 80 and MSFT scores 60, AAPL gets 57% of the allocation. No fixed position sizing — the math handles it.
 

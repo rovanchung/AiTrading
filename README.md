@@ -27,21 +27,17 @@ For detailed information on operation modes, configuration, and safety features,
 
 ## Strategy Versions
 
-The system supports multiple strategy versions, each with its own parameters. Run several simultaneously — each process writes to its own database:
+The system supports two strategy versions, each with its own parameters. Run them simultaneously — each process writes to its own database:
 
 ```bash
-./aitrade run --version v1 &
-./aitrade run --version v2 &
 ./aitrade run --version v3 &
 ./aitrade run --version v4 &
 ```
 
-| Version | Strategy | Profit | Loss | Hold time | Hysteresis |
-|---------|----------|--------|------|-----------|------------|
-| **V1** — Original | v1 | 1% | 0.5% | None | No (sell threshold = buy threshold) |
-| **V2** — Anti-churn | v2 | 3% | 2% | 30 min | Yes (sell < 55, min 1 share rebalance) |
-| **V3** — Custom | v2 | 5% | 3% | 30 min | Yes (sell < 55, min 1 share rebalance) |
-| **V4** — No hold | v2 | 5% | 3% | None | Yes (sell < 55, min 1 share rebalance) |
+| Version | Profit take | Loss cut | Hold time | Hysteresis |
+|---------|-------------|----------|-----------|------------|
+| **V3** — Custom  | 20% (also 5% vs prior close) | 2% (also 2% vs prior close) | None | Yes (sell < 65, debounced over 4 cycles) |
+| **V4** — No hold | 5% | 3% | None | Yes (sell < 58, min 1 share rebalance) |
 
 ## Alpaca Accounts
 

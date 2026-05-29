@@ -23,11 +23,6 @@ class PortfolioManager:
         self.tc = config.trading
         self._macro_adjustments = None
 
-    @property
-    def _is_v2(self) -> bool:
-        """True for any account using v2 strategy (v2, v3, etc.)."""
-        return self.tc.get("strategy_version", "v1") == "v2"
-
     def set_macro_adjustments(self, adjustments: Optional[dict]):
         """Apply macro-economic parameter adjustments for this cycle."""
         self._macro_adjustments = adjustments
@@ -115,18 +110,11 @@ class PortfolioManager:
 
         Returns (sell_signals, tickers_sold) — sold tickers get cooldown.
         """
-        if self._is_v2:
-            profit_take = self.tc.get("v2_profit_take_pct", 0.03)
-            loss_cut = self.tc.get("v2_loss_cut_pct", 0.02)
-            profit_take_prior = self.tc.get("v2_profit_take_vs_prior_close_pct", 0.0)
-            loss_cut_prior = self.tc.get("v2_loss_cut_vs_prior_close_pct", 0.0)
-            min_hold_minutes = self.tc.get("v2_min_hold_minutes", 30)
-        else:
-            profit_take = self.tc.get("profit_take_pct", 0.01)
-            loss_cut = self.tc.get("loss_cut_pct", 0.005)
-            profit_take_prior = self.tc.get("profit_take_vs_prior_close_pct", 0.0)
-            loss_cut_prior = self.tc.get("loss_cut_vs_prior_close_pct", 0.0)
-            min_hold_minutes = 0
+        profit_take = self.tc.get("v2_profit_take_pct", 0.03)
+        loss_cut = self.tc.get("v2_loss_cut_pct", 0.02)
+        profit_take_prior = self.tc.get("v2_profit_take_vs_prior_close_pct", 0.0)
+        loss_cut_prior = self.tc.get("v2_loss_cut_vs_prior_close_pct", 0.0)
+        min_hold_minutes = self.tc.get("v2_min_hold_minutes", 30)
 
         prior_close_enabled = profit_take_prior > 0 or loss_cut_prior > 0
 
@@ -138,7 +126,7 @@ class PortfolioManager:
             if not live:
                 continue
 
-            # v2: skip positions not held long enough
+            # skip positions not held long enough
             if min_hold_minutes > 0 and pos.entry_time:
                 held_minutes = (datetime.now() - pos.entry_time).total_seconds() / 60
                 if held_minutes < min_hold_minutes:
@@ -189,16 +177,11 @@ class PortfolioManager:
         return signals, sold_tickers
 
     def _score_sell_params(self) -> tuple[float, int, int]:
-        """Resolve (sell_threshold, consecutive_n, ma_window) for the active
-        strategy version. v1 has no hysteresis (sell_threshold == buy_threshold)."""
-        if self._is_v2:
-            sell_threshold = self.tc.get("v2_sell_threshold", 55)
-            consecutive_n = self.tc.get("v2_no_longer_qualifies_consecutive", 0)
-            ma_window = self.tc.get("v2_no_longer_qualifies_ma_window", 0)
-        else:
-            sell_threshold = self._get_effective_param("buy_threshold", 60)
-            consecutive_n = self.tc.get("no_longer_qualifies_consecutive", 0)
-            ma_window = self.tc.get("no_longer_qualifies_ma_window", 0)
+        """Resolve (sell_threshold, consecutive_n, ma_window) for the
+        no_longer_qualifies hysteresis floor."""
+        sell_threshold = self.tc.get("v2_sell_threshold", 55)
+        consecutive_n = self.tc.get("v2_no_longer_qualifies_consecutive", 0)
+        ma_window = self.tc.get("v2_no_longer_qualifies_ma_window", 0)
         return sell_threshold, int(consecutive_n), int(ma_window)
 
     def _should_score_sell(
@@ -335,16 +318,10 @@ class PortfolioManager:
         purchase_power_pct = self.tc.get("purchase_power_pct", 0.50)
         cooldown_hours = self.tc.get("cooldown_hours", 2)
 
-        if self._is_v2:
-            sell_threshold = self.tc.get("v2_sell_threshold", 55)
-            min_share_diff = self.tc.get("v2_rebalance_min_share_diff", 1.0)
-            profit_take_prior = self.tc.get("v2_profit_take_vs_prior_close_pct", 0.0)
-            loss_cut_prior = self.tc.get("v2_loss_cut_vs_prior_close_pct", 0.0)
-        else:
-            sell_threshold = buy_threshold  # no hysteresis in v1
-            min_share_diff = 0.0
-            profit_take_prior = self.tc.get("profit_take_vs_prior_close_pct", 0.0)
-            loss_cut_prior = self.tc.get("loss_cut_vs_prior_close_pct", 0.0)
+        sell_threshold = self.tc.get("v2_sell_threshold", 55)
+        min_share_diff = self.tc.get("v2_rebalance_min_share_diff", 1.0)
+        profit_take_prior = self.tc.get("v2_profit_take_vs_prior_close_pct", 0.0)
+        loss_cut_prior = self.tc.get("v2_loss_cut_vs_prior_close_pct", 0.0)
 
         prior_close_enabled = profit_take_prior > 0 or loss_cut_prior > 0
 
@@ -517,7 +494,7 @@ class PortfolioManager:
                             stats.setdefault("skip_prior_close_trip", 0)
                             stats["skip_prior_close_trip"] += 1
                             continue
-                # v2: skip if the dollar gap is worth less than min_share_diff
+                # skip if the dollar gap is worth less than min_share_diff
                 # shares at the current price (only applies when already
                 # holding — initial entries always pass)
                 if min_share_diff > 0 and current_qty > 0:
@@ -559,7 +536,7 @@ class PortfolioManager:
                 )
             elif target_qty < current_qty:
                 sell_qty = current_qty - target_qty
-                # v2: skip if the dollar gap is worth less than min_share_diff
+                # skip if the dollar gap is worth less than min_share_diff
                 # shares at the current price
                 if min_share_diff > 0:
                     share_diff = abs(target_dollars - current_dollars) / current_price

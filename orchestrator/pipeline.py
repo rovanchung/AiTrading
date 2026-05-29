@@ -338,8 +338,8 @@ class TradingPipeline:
         - Record a fresh portfolio snapshot
 
         Synced-in positions use entry_price=avg_entry (from Alpaca) and
-        entry_time=now since the real entry timestamp is unknown. v2/v3
-        hold-window logic will therefore treat synced rows as just-bought.
+        entry_time=now since the real entry timestamp is unknown. The
+        min-hold-time logic will therefore treat synced rows as just-bought.
 
         Returns a summary dict; safe to call without the trade lock when
         no other cycle is running (e.g. the standalone CLI command).

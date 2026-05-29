@@ -52,14 +52,14 @@ sys.path.insert(0, PROJECT_ROOT)
 
 PYTHON = _VENV_PY
 PIP = os.environ.get("PIP", os.path.expanduser("~/python_env/torch-env/bin/pip"))
-DB_PATH = os.path.join(PROJECT_ROOT, "data", "trading.db")
 
 # Active version and optional account (set by menus or CLI flags)
 ACTIVE_VERSION = None
 ACTIVE_ACCOUNT = None
 
 def _version_db_path():
-    """Return the DB path for the active (version, account) combo."""
+    """Return the DB path for the active (version, account) combo, or None
+    if no version is selected (there is no default database)."""
     if ACTIVE_VERSION and ACTIVE_ACCOUNT:
         return os.path.join(
             PROJECT_ROOT, "data",
@@ -74,7 +74,7 @@ def _version_db_path():
         rel = acct.get("database_path")
         if rel:
             return os.path.join(PROJECT_ROOT, rel)
-    return DB_PATH
+    return None
 
 def _version_args():
     """Return --version / --account args list for the active selection."""
@@ -312,15 +312,15 @@ def cmd_reset_db(args):
     """Delete and re-initialize the local database for one version (or all).
 
     Usage:
-        ./aitrade --version v1 reset-db    # reset v1
-        ./aitrade reset-db --all           # reset v1..v4
+        ./aitrade --version v3 reset-db    # reset v3
+        ./aitrade reset-db --all           # reset v3, v4
         ./aitrade reset-db --yes           # skip confirmation
     """
     skip_confirm = "--yes" in args or "-y" in args
     reset_all = "--all" in args
 
     if reset_all:
-        target_label = "ALL per-version databases (v1..v4)"
+        target_label = "ALL per-version databases (v3, v4)"
     elif ACTIVE_VERSION:
         target_label = f"{ACTIVE_VERSION.upper()} database"
     else:
@@ -445,7 +445,7 @@ def cmd_configure_env(_args):
     else:
         print(f"  {DIM}No credential pairs defined yet — skip or go back.{RESET}")
 
-    for ver in ("V1", "V2", "V3", "V4"):
+    for ver in ("V3", "V4"):
         cur = values.get(f"ALPACA_ACCOUNT_{ver}", "")
         label = f"Account for {ver}" + (f" (currently {cur})" if cur else "")
         new = input_prompt(label, cur).strip().upper()
@@ -513,8 +513,11 @@ def cmd_logs(args):
 
 def cmd_db(args):
     """Query the SQLite database."""
+    if not ACTIVE_VERSION:
+        print(f"  {YELLOW}No version selected. Pass --version v3 or --version v4.{RESET}")
+        return
     db_path = _version_db_path()
-    if not os.path.isfile(db_path):
+    if not db_path or not os.path.isfile(db_path):
         print(f"  Database not found at {db_path}")
         print(f"  Run: ./aitrade setup-db")
         return
@@ -589,7 +592,7 @@ def _load_config():
 
 
 def _strategy_table_lines(active_version=None):
-    """Build the V1..V4 strategy comparison table as a list of printable lines."""
+    """Build the V3/V4 strategy comparison table as a list of printable lines."""
     try:
         cfg = _load_config()
     except Exception as e:
@@ -598,7 +601,7 @@ def _strategy_table_lines(active_version=None):
     trading = cfg.get("trading", {})
     accounts = cfg.get("accounts", {})
 
-    versions = ("v1", "v2", "v3", "v4")
+    versions = ("v3", "v4")
     eff = {v: {**trading, **accounts.get(v, {})} for v in versions}
 
     def neg_pct(val):
@@ -611,33 +614,21 @@ def _strategy_table_lines(active_version=None):
             return None
         return "0" if val == 0 else f"+{val*100:.4g}%"
 
-    def plain_pct(val):
-        if val is None:
-            return None
-        return "0" if val == 0 else f"{val*100:.4g}%"
-
-    def cell(v, key, *, only_strategy=None, formatter=pos_pct):
+    def cell(v, key, *, formatter=pos_pct):
         p = eff[v]
-        if only_strategy and p.get("strategy_version", "v1") not in only_strategy:
-            return "—"
         if key not in p:
             return "—"
         out = formatter(p.get(key))
         return "—" if out is None else out
 
     rows = [
-        ("strategy_version",                  [eff[v].get("strategy_version", "v1") for v in versions]),
-        ("profit_take_pct",                    [cell(v, "profit_take_pct",                  only_strategy={"v1"}) for v in versions]),
-        ("loss_cut_pct",                       [cell(v, "loss_cut_pct",                     only_strategy={"v1"}, formatter=neg_pct) for v in versions]),
-        ("profit_take_vs_prior_close_pct",     [cell(v, "profit_take_vs_prior_close_pct",   only_strategy={"v1"}) for v in versions]),
-        ("loss_cut_vs_prior_close_pct",        [cell(v, "loss_cut_vs_prior_close_pct",      only_strategy={"v1"}, formatter=neg_pct) for v in versions]),
-        ("v2_profit_take_pct",                 [cell(v, "v2_profit_take_pct",               only_strategy={"v2"}) for v in versions]),
-        ("v2_loss_cut_pct",                    [cell(v, "v2_loss_cut_pct",                  only_strategy={"v2"}, formatter=neg_pct) for v in versions]),
-        ("v2_profit_take_vs_prior_close_pct",  [cell(v, "v2_profit_take_vs_prior_close_pct",only_strategy={"v2"}) for v in versions]),
-        ("v2_loss_cut_vs_prior_close_pct",     [cell(v, "v2_loss_cut_vs_prior_close_pct",   only_strategy={"v2"}, formatter=neg_pct) for v in versions]),
-        ("v2_min_hold_minutes",                [cell(v, "v2_min_hold_minutes",              only_strategy={"v2"}, formatter=lambda x: f"{x}m") for v in versions]),
-        ("v2_sell_threshold",                  [cell(v, "v2_sell_threshold",                only_strategy={"v2"}, formatter=str) for v in versions]),
-        ("v2_rebalance_dead_band_pct",         [cell(v, "v2_rebalance_dead_band_pct",       only_strategy={"v2"}, formatter=plain_pct) for v in versions]),
+        ("v2_profit_take_pct",                 [cell(v, "v2_profit_take_pct") for v in versions]),
+        ("v2_loss_cut_pct",                    [cell(v, "v2_loss_cut_pct",                  formatter=neg_pct) for v in versions]),
+        ("v2_profit_take_vs_prior_close_pct",  [cell(v, "v2_profit_take_vs_prior_close_pct") for v in versions]),
+        ("v2_loss_cut_vs_prior_close_pct",     [cell(v, "v2_loss_cut_vs_prior_close_pct",   formatter=neg_pct) for v in versions]),
+        ("v2_min_hold_minutes",                [cell(v, "v2_min_hold_minutes",              formatter=lambda x: f"{x}m") for v in versions]),
+        ("v2_sell_threshold",                  [cell(v, "v2_sell_threshold",                formatter=str) for v in versions]),
+        ("v2_rebalance_min_share_diff",        [cell(v, "v2_rebalance_min_share_diff",      formatter=str) for v in versions]),
         ("buy_threshold",                      [str(eff[v].get("buy_threshold", "—"))      for v in versions]),
     ]
 
@@ -680,9 +671,7 @@ def cmd_info(_args):
     print(f"  {BOLD}AiTrading — Reference Guide{RESET}")
     print(f"  ============================")
     if ACTIVE_VERSION:
-        eff_active = {**trading, **accounts.get(ACTIVE_VERSION, {})}
-        print(f"\n  {BOLD}Active version:{RESET} {ACTIVE_VERSION.upper()} "
-              f"(strategy: {eff_active.get('strategy_version', 'v1')})")
+        print(f"\n  {BOLD}Active version:{RESET} {ACTIVE_VERSION.upper()}")
 
     print(f"\n  {BOLD}OPERATION MODES{RESET}")
     print(f"  ---------------\n")
@@ -768,10 +757,8 @@ def menu_version():
         print(line)
     print()
     choice = pick_menu("Select Version", [
-        {"label": "V1 — Original",   "desc": "", "value": "v1"},
-        {"label": "V2 — Anti-churn", "desc": "", "value": "v2"},
-        {"label": "V3 — Custom",     "desc": "", "value": "v3"},
-        {"label": "V4 — No hold",    "desc": "", "value": "v4"},
+        {"label": "V3 — Custom",  "desc": "", "value": "v3"},
+        {"label": "V4 — No hold", "desc": "", "value": "v4"},
     ], back_label="Back")
 
     if choice is None:
@@ -937,7 +924,7 @@ def menu_setup():
         {"label": "Configure API keys",   "desc": "Set up .env file",                    "value": "env"},
         {"label": "Setup database",       "desc": "Initialize SQLite tables",             "value": "db"},
         {"label": "Reset database",       "desc": f"Delete + re-init DB for {ver}",      "value": "reset"},
-        {"label": "Reset ALL databases",  "desc": "Delete + re-init v1..v4",             "value": "reset-all"},
+        {"label": "Reset ALL databases",  "desc": "Delete + re-init v3, v4",             "value": "reset-all"},
         {"label": "All",                  "desc": "Install + configure + setup DB",      "value": "all"},
     ], back_label="Back")
 

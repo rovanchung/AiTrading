@@ -91,7 +91,7 @@ class Config:
 def activate_version(
     version: str, config_path: str = "config.yaml", account: str = None
 ) -> None:
-    """Set environment variables for a trading version (v1..v4).
+    """Set environment variables for a trading version (v3 or v4).
 
     Picks the Alpaca credential pair to use for this version and copies it
     into ALPACA_API_KEY / ALPACA_SECRET_KEY so downstream modules (e.g.
@@ -155,7 +155,7 @@ def load_config(
 ) -> Config:
     """Load configuration from YAML file and .env.
 
-    If `version` is specified (v1..v4), applies account-specific overrides
+    If `version` is specified (v3 or v4), applies account-specific overrides
     for database path and strategy parameters from config.yaml.
 
     If `account` is also specified, overrides the database path to

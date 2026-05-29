@@ -27,7 +27,7 @@
 - Update when: new module or file added (module layout)
 
 ### [config.yaml](config.yaml)
-**All tunable parameters.** Trading thresholds, scoring weights, screener filters, schedule timing, macro settings, logging config, database path.
+**All tunable parameters.** Trading thresholds, scoring weights, screener filters, schedule timing, macro settings, logging config, per-version database paths (`accounts:` section).
 - Update when: new config keys added
 
 ### [dashboard/](dashboard/)

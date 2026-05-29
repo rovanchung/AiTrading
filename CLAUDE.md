@@ -11,10 +11,10 @@ Automated stock trading system.
 ## Key Files
 
 - `config.yaml` — all tunable parameters (thresholds, weights, schedule, filters)
-- `.env` — API keys: Alpaca credential pairs (any suffix) + `ALPACA_ACCOUNT_V{1-4}` mapping, FMP, Finnhub (gitignored, never commit)
-- `data/trading_v{1,2,3,4}.db` — default per-version SQLite DBs; `data/trading_{version}_{account}.db` when `--account` is passed (runtime, gitignored)
-- `aitrade` — CLI entry point (Python): interactive menu or `./aitrade [--version vN] [--account SUFFIX] <command>` (run, once, dry-run, scan, dashboard, db, logs, setup-db, install, info)
-- `main.py` — trading engine: `--dry-run`, `--once`, `--no-macro`, `--dashboard`, `--version v1|v2|v3|v4`, `--account <suffix>`, or continuous scheduler
+- `.env` — API keys: Alpaca credential pairs (any suffix) + `ALPACA_ACCOUNT_V{3,4}` mapping, FMP, Finnhub (gitignored, never commit)
+- `data/trading_v{3,4}.db` — per-version SQLite DBs (selected by `--version`); `data/trading_{version}_{account}.db` when `--account` is passed (runtime, gitignored). There is no default/no-version DB — `--version` is required for all trading modes.
+- `aitrade` — CLI entry point (Python): interactive menu or `./aitrade [--version v3|v4] [--account SUFFIX] <command>` (run, once, dry-run, scan, dashboard, db, logs, setup-db, install, info)
+- `main.py` — trading engine: `--dry-run`, `--once`, `--no-macro`, `--dashboard`, `--version v3|v4` (required except for `--dashboard`), `--account <suffix>`, or continuous scheduler
 - `scripts/manual_scan.py` — manual analysis tool for debugging
 
 ## Module Layout

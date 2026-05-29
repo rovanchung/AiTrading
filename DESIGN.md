@@ -249,19 +249,19 @@ Composite = 0.35×Technical + 0.25×Fundamental + 0.25×Momentum + 0.15×Sentime
 
 Profit/loss thresholds and hold rules vary by account version. Per-account overrides are configured in the `accounts:` section of `config.yaml`.
 
-| Rule | V1 | V2 | V3 | V4 | Purpose |
-|------|----|----|----|----|---------|
-| Profit take | +1% | +3% | +5% | +5% | Sell and reallocate |
-| Loss cut | -0.5% | -2% | -3% | -3% | Sell to limit losses |
-| Min hold time | None | 30 min | 30 min | None | Prevent premature sells |
-| Sell threshold | `trading.buy_threshold` (= buy) | `trading.v2_sell_threshold` | `trading.v2_sell_threshold` | `trading.v2_sell_threshold` (override in `accounts.v4.account_overrides.v4_2`) | Score hysteresis for qualification sells; **not** macro-adjusted |
-| Score-sell debounce | `trading.no_longer_qualifies_consecutive` / `…_ma_window` (both default 0 = disabled) | `trading.v2_no_longer_qualifies_consecutive` / `…_ma_window` | **`v2_no_longer_qualifies_consecutive: 4`** (4 consecutive sub-threshold scores required) | `trading.v2_no_longer_qualifies_consecutive` / `…_ma_window` | OR semantics. Debounces score-based exits so single-cycle blips don't churn |
-| Rebalance min share diff | None | `trading.v2_rebalance_min_share_diff` | `trading.v2_rebalance_min_share_diff` | `trading.v2_rebalance_min_share_diff` (override for `v4_2`) | Skip rebalance trades worth less than N shares at current price |
-| Cooldown | `trading.cooldown_hours` | `trading.cooldown_hours` | `trading.cooldown_hours` | `trading.cooldown_hours` | Prevent re-buying a just-sold ticker |
-| Purchase power | `trading.purchase_power_pct` | `trading.purchase_power_pct` | `trading.purchase_power_pct` | `trading.purchase_power_pct` | Capital allocated for redistribution |
-| Buy threshold | `trading.buy_threshold` (macro-adjusted) | `trading.buy_threshold` (macro-adjusted) | `trading.buy_threshold` (macro-adjusted) | `trading.buy_threshold` (macro-adjusted) | Minimum composite score to qualify |
+| Rule | V3 | V4 | Purpose |
+|------|----|----|---------|
+| Profit take | +20% (also +5% vs prior close) | +5% | Sell and reallocate |
+| Loss cut | -2% (also -2% vs prior close) | -3% | Sell to limit losses |
+| Min hold time | None | None | Prevent premature sells |
+| Sell threshold | `trading.v2_sell_threshold` (65) | `trading.v2_sell_threshold` (override in `accounts.v4.account_overrides.v4_2`) | Score hysteresis for qualification sells; **not** macro-adjusted |
+| Score-sell debounce | **`v2_no_longer_qualifies_consecutive: 4`** (4 consecutive sub-threshold scores required) | `trading.v2_no_longer_qualifies_consecutive` / `…_ma_window` | OR semantics. Debounces score-based exits so single-cycle blips don't churn |
+| Rebalance min share diff | `trading.v2_rebalance_min_share_diff` | `trading.v2_rebalance_min_share_diff` (override for `v4_2`) | Skip rebalance trades worth less than N shares at current price |
+| Cooldown | `trading.cooldown_hours` | `trading.cooldown_hours` | Prevent re-buying a just-sold ticker |
+| Purchase power | `trading.purchase_power_pct` | `trading.purchase_power_pct` | Capital allocated for redistribution |
+| Buy threshold | `trading.buy_threshold` (macro-adjusted) | `trading.buy_threshold` (macro-adjusted) | Minimum composite score to qualify |
 
-Each strategy version runs with its own database and Alpaca credentials. Credentials can be selected per-process via `--account <suffix>` (picks `ALPACA_API_KEY_{suffix}` / `ALPACA_SECRET_KEY_{suffix}` and uses a unique `data/trading_{version}_{account}.db`), which lets the same version run concurrently against multiple Alpaca accounts. Without `--account`, credentials fall back to the `ALPACA_ACCOUNT_V{N}=<suffix>` mapping in `.env`, then to legacy `ALPACA_API_KEY_V{N}` naming, then to bare `ALPACA_API_KEY`. V2/V3/V4 use the v2 strategy engine (hysteresis + min-share-diff rebalance floor); V1 uses the original logic.
+Each strategy version runs with its own database and Alpaca credentials. Credentials can be selected per-process via `--account <suffix>` (picks `ALPACA_API_KEY_{suffix}` / `ALPACA_SECRET_KEY_{suffix}` and uses a unique `data/trading_{version}_{account}.db`), which lets the same version run concurrently against multiple Alpaca accounts. Without `--account`, credentials fall back to the `ALPACA_ACCOUNT_V{N}=<suffix>` mapping in `.env`, then to legacy `ALPACA_API_KEY_V{N}` naming, then to bare `ALPACA_API_KEY`. Both V3 and V4 use the anti-churn strategy engine (hysteresis + min-share-diff rebalance floor).
 
 Note: Previous risk rules (max positions, sector limits, cash reserve, stop-loss, trailing stop, take-profit, drawdown) are deprecated and commented out in `config.yaml`. Position sizing is now handled entirely by the score-proportional redistribution engine.
 

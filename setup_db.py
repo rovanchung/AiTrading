@@ -2,11 +2,10 @@
 """Initialize (or reset) the AiTrading database.
 
 Usage:
-    python setup_db.py                          # init default DB (data/trading.db)
-    python setup_db.py --version v1             # init the per-account DB for v1..v4
-    python setup_db.py --version v1 --reset     # delete the file first, then re-init
-    python setup_db.py --init-all               # non-destructively init every DB (default + all accounts)
-    python setup_db.py --reset-all              # reset every per-account DB (v1..v4)
+    python setup_db.py --version v3             # init the per-account DB for v3 or v4
+    python setup_db.py --version v3 --reset     # delete the file first, then re-init
+    python setup_db.py --init-all               # non-destructively init every per-account DB (v3, v4)
+    python setup_db.py --reset-all              # reset every per-account DB (v3, v4)
 """
 
 import os
@@ -61,7 +60,6 @@ def main():
             break
 
     if do_init_all:
-        _init_one(None)  # default trading.db
         for ver in _all_versions():
             _init_one(ver)
         return
@@ -70,6 +68,13 @@ def main():
         for ver in _all_versions():
             _reset_one(ver)
         return
+
+    if not version:
+        print(
+            "Error: --version is required (choices: v3, v4), "
+            "or use --init-all / --reset-all."
+        )
+        sys.exit(1)
 
     if do_reset:
         _reset_one(version)

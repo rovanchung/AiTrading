@@ -8,7 +8,7 @@ Complete execution flow from launch through every scheduled job and trading deci
 
 1. Parse CLI args, load `config.yaml` via `core/config.py`
 2. Set up logging (main log + transaction log) via `core/logging_config.py`
-3. Open SQLite database (`data/trading.db`), initialize schema
+3. Open the per-version SQLite database (`data/trading_{version}.db`, selected by `--version`), initialize schema
 4. Create components:
    - `AlpacaClient` — broker connection (Alpaca API)
    - `OrderManager` — order submission with retries

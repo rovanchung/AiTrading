@@ -18,13 +18,13 @@ Supporting indicators:
 - `pattern_day_trader: true` → PDT flag is active
 - `daytrade_count` → rolling 5-business-day count
 
-Quick check across all four accounts:
+Quick check across both accounts:
 
 ```bash
 ~/python_env/torch-env/bin/python3 -c "
 from core.config import load_config, activate_version
 from executor.alpaca_client import AlpacaClient
-for v in ['v1','v2','v3','v4']:
+for v in ['v3','v4']:
     activate_version(v)
     cfg = load_config(version=v)
     acct = AlpacaClient(cfg).client.get_account()
