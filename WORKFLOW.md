@@ -142,7 +142,7 @@ This is the core trading decision block. The trade lock prevents concurrent acce
 
 1. **Sync pending orders** (`orchestrator/pipeline.py → _sync_pending_orders`):
    - Check all DB pending buy orders against Alpaca status
-   - If filled: create `Position` record in DB
+   - If filled: create `Position` record in DB — **unless the ticker is on cooldown** (see *Cooldown enforcement* below). A buy submitted before the name was exited can fill *after* a profit/loss sell cooled it; that stray fill is flattened immediately (`_flatten_cooldown_fill`) instead of re-opening the position.
    - If canceled/expired/rejected: mark order as canceled in DB
    - Return map of currently open orders on Alpaca
 
@@ -153,21 +153,33 @@ This is the core trading decision block. The trade lock prevents concurrent acce
 
 2. **Get account state** from Alpaca (portfolio value, cash) — **API: Alpaca** (account)
 3. **Get live positions** from Alpaca (with avg_entry cost basis) — **API: Alpaca** (positions)
+3b. **Reconcile positions to Alpaca** (`core/database.py → reconcile_positions`):
+   - Insert open rows for tickers Alpaca holds but the DB doesn't; update drifted qty/cost; close orphans Alpaca no longer holds
+   - **Cooldown drift guard:** an untracked Alpaca holding for a name still on cooldown is an unwanted re-entry (a position can only become untracked-and-cooled by being re-bought after a profit/loss sell). It is **not** tracked; its ticker is returned and the pipeline flattens it (`_flatten_cooldown_fill`).
 4. **Save portfolio snapshot** to DB (value, cash, invested, peak)
 
 5. **Step 1 — Profit-based sells** (`portfolio/manager.py → _profit_based_sells`):
    - For each held position, calculate P&L using Alpaca `avg_entry` (cost basis)
+   - Skip positions held less than `v2_min_hold_minutes` (v2; default 30, but v3/v4 set 0)
    - **Profit take:** sell if P&L >= `profit_take_pct` (config, default +1%)
    - **Loss cut:** sell if P&L <= `-loss_cut_pct` (config, default -0.5%)
-   - Sold tickers get `cooldown_hours` (config, default 2 hours) before re-buying
+   - Sold tickers enter the `cooldown_hours` window (config; currently 8h) — see *Cooldown enforcement* below
 
 6. **Step 2 — Score-based redistribution** (`portfolio/manager.py → _redistribute`):
    - Filter scored candidates to those with composite >= macro-adjusted `buy_threshold`
-   - Exclude tickers in cooldown (from profit/loss sells within last 2 hours)
+   - Exclude tickers in cooldown, and never re-arm a cooled-down name even via the recently-cancelled in-flight retry path (cooldown is subtracted explicitly, not only via the already-handled set)
    - Calculate proportional allocation: `target_pct = score / total_qualifying_scores`
    - Available capital = `purchase_power_pct` (config, default 50%) × portfolio value
    - For each qualifying stock: compute target qty → sell excess or buy deficit
    - Sell positions that no longer qualify (no cooldown for redistribution sells)
+
+**Cooldown enforcement** (prevents the loss-cut → rebuy loop):
+   - A name sold via `profit_take*` / `loss_cut*` is on cooldown for `cooldown_hours` (`db.get_recently_profit_sold`).
+   - The cooldown is enforced at **three** points, because a position can be (re)opened by more than just new signals:
+     1. **Signal generation** (`_redistribute`) — cooled-down names aren't proposed for buying (incl. the in-flight retry path).
+     2. **Pending-buy fills** (`_reconcile_pending_buys`) — a limit buy placed pre-exit that fills post-exit is flattened, not tracked.
+     3. **Alpaca drift reconcile** (`reconcile_positions`) — a stray untracked holding of a cooled-down name is flattened, not tracked.
+   - Why three: buys are **limit** orders (`current_price × 1.001`) that can rest and fill on a later cycle, so a fill can arrive after the name was already exited and cooled. Gating only signal generation (the historical behavior) let those late fills silently re-open the position and spin a rapid sell→rebuy loop. Flattening at the open paths closes that gap.
 
 7. **Cash guard** (`orchestrator/pipeline.py → _apply_cash_guard`, when `cash_only: true`):
    - Budget = `account.cash` + estimated sell proceeds − value reserved by pending buys (each adjusted by `cash_slippage_buffer`)

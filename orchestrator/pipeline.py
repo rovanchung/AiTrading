@@ -483,6 +483,35 @@ class TradingPipeline:
                     f"for {db_order['ticker']}: {e}"
                 )
 
+    def _cooldown_tickers(self) -> set[str]:
+        """Tickers within their post-exit cooldown window (sold for
+        profit/loss in the last `cooldown_hours`). Mirrors the gate used by
+        PortfolioManager redistribution so the reconcile/open paths enforce
+        the same rule."""
+        cooldown_hours = self.config.trading.get("cooldown_hours", 2)
+        return self.db.get_recently_profit_sold(cooldown_hours)
+
+    def _flatten_cooldown_fill(self, ticker: str, qty: int, fill_price: float):
+        """Sell off shares acquired for a ticker still on cooldown.
+
+        A buy can fill after the strategy already exited and cooled the name
+        (limit order placed pre-exit, fills post-exit, or external drift).
+        Holding it would let the loss-cut → rebuy loop spin, so we flatten it
+        immediately rather than tracking it as a position.
+        """
+        try:
+            self.broker.close_position(ticker, qty)
+            txn_logger.info(
+                f"SELL | {ticker} | qty={qty} | price~{fill_price:.2f} | "
+                f"reason=cooldown_flatten"
+            )
+            logger.warning(
+                f"Cooldown flatten: {ticker} qty={qty} re-acquired within the "
+                f"cooldown window — flattened instead of holding"
+            )
+        except Exception as e:
+            logger.warning(f"Cooldown flatten failed for {ticker}: {e}")
+
     def _reconcile_pending_buys(self):
         """Check DB pending buy orders against Alpaca and reconcile."""
         pending = self.db.get_pending_buy_orders()
@@ -492,6 +521,13 @@ class TradingPipeline:
         # Build set of tickers that already have open DB positions
         open_positions = self.db.get_open_positions()
         open_tickers = {p.ticker for p in open_positions}
+
+        # Cooldown guard: a buy limit order submitted before the ticker was
+        # exited can fill *after* a profit/loss sell put the name on cooldown.
+        # Re-opening it here would bypass the cooldown (which is only enforced
+        # at signal generation) and feed the loss-cut → rebuy loop. Flatten
+        # such fills instead of tracking them as positions.
+        cooldown_tickers = self._cooldown_tickers()
 
         for db_order in pending:
             try:
@@ -506,9 +542,13 @@ class TradingPipeline:
                         filled_price=fill_price,
                         filled_at=datetime.now(),
                     )
+                    ticker = db_order["ticker"]
+                    qty = result.get("filled_qty") or db_order["qty"]
+                    if ticker in cooldown_tickers and ticker not in open_tickers:
+                        self._flatten_cooldown_fill(ticker, qty, fill_price)
+                        continue
                     # Create position if one doesn't already exist
                     if db_order["ticker"] not in open_tickers:
-                        qty = result.get("filled_qty") or db_order["qty"]
                         pos = Position(
                             ticker=db_order["ticker"],
                             qty=qty,
@@ -647,14 +687,23 @@ class TradingPipeline:
 
             # Reconcile local positions table to Alpaca ground truth before
             # decisions are made. Catches any drift caused by missed fills,
-            # external manual trades, or app restarts mid-execution.
-            recon = self.db.reconcile_positions(alpaca_positions)
+            # external manual trades, or app restarts mid-execution. Pass the
+            # cooldown set so a stray holding of a just-exited name is flagged
+            # for flattening rather than re-tracked (cooldown enforcement).
+            cooldown_tickers = self._cooldown_tickers()
+            recon = self.db.reconcile_positions(alpaca_positions, cooldown_tickers)
             if recon["inserted"] or recon["updated"] or recon["closed"]:
                 logger.info(
                     f"Position reconcile: +{recon['inserted']} new, "
                     f"~{recon['updated']} updated, "
                     f"-{recon['closed']} closed (orphan)"
                 )
+            for ticker in recon.get("cooldown_holdings", []):
+                ap = next((p for p in alpaca_positions if p["ticker"] == ticker), None)
+                if ap:
+                    self._flatten_cooldown_fill(
+                        ticker, ap["qty"], ap.get("current_price", 0) or 0
+                    )
 
             positions = self.db.get_open_positions()
 

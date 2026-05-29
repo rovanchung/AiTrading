@@ -376,7 +376,12 @@ class PortfolioManager:
         # represent in-flight entries the system already committed to and
         # should keep the hysteresis floor on retry.
         held_tickers = {p.ticker for p in positions if p.ticker not in excluded}
-        in_flight_eligible = in_flight_buy_tickers - excluded
+        # Re-arm recently-cancelled in-flight buys with the hysteresis floor,
+        # but NEVER a name on cooldown — re-issuing a buy for a just-sold
+        # ticker is exactly the loss-cut → rebuy loop we must avoid. Subtract
+        # cooldown_tickers explicitly (not just via `excluded`) so this holds
+        # even if the composition of `already_handled`/`excluded` changes.
+        in_flight_eligible = in_flight_buy_tickers - excluded - cooldown_tickers
         if in_flight_eligible:
             held_tickers |= in_flight_eligible
             logger.info(

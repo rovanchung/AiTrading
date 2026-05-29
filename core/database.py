@@ -296,7 +296,9 @@ class Database:
         ).fetchall()
         return [self._row_to_position(r) for r in rows]
 
-    def reconcile_positions(self, alpaca_positions: list[dict]) -> dict:
+    def reconcile_positions(
+        self, alpaca_positions: list[dict], cooldown_tickers: set[str] | None = None
+    ) -> dict:
         """Sync local positions table to Alpaca's ground truth.
 
         - Insert open rows for tickers Alpaca holds but the DB does not
@@ -308,8 +310,17 @@ class Database:
           at this point, but pnl will be reconciled to ~0 — better than
           letting the row persist as phantom-open).
 
+        `cooldown_tickers` (optional): names within their post-exit cooldown
+        window. An untracked Alpaca holding for such a name is an unwanted
+        re-entry (a position can only become untracked-and-cooled by being
+        re-bought after a profit/loss sell). It is NOT inserted; instead its
+        ticker is returned under "cooldown_holdings" so the caller can flatten
+        it. This keeps the cooldown enforced on the drift path, not just at
+        signal generation.
+
         Returns a counts dict for logging. Only touches rows with status='open'.
         """
+        cooldown_tickers = cooldown_tickers or set()
         local_rows = self.conn.execute(
             "SELECT id, ticker, qty, entry_price FROM positions WHERE status='open'"
         ).fetchall()
@@ -317,12 +328,18 @@ class Database:
         alpaca_by_ticker = {p["ticker"]: p for p in alpaca_positions}
 
         inserted = updated = closed = 0
+        cooldown_holdings: list[str] = []
         now = datetime.now()
 
         # Insert / update
         for ticker, ap in alpaca_by_ticker.items():
             local = local_by_ticker.get(ticker)
             if local is None:
+                if ticker in cooldown_tickers:
+                    # Unwanted re-entry of a cooled-down name — don't track it;
+                    # let the caller flatten the stray holding.
+                    cooldown_holdings.append(ticker)
+                    continue
                 sector = self.get_stock_sector(ticker)
                 entry_score = self._latest_composite(ticker)
                 self.conn.execute(
@@ -353,7 +370,12 @@ class Database:
 
         if inserted or updated or closed:
             self.conn.commit()
-        return {"inserted": inserted, "updated": updated, "closed": closed}
+        return {
+            "inserted": inserted,
+            "updated": updated,
+            "closed": closed,
+            "cooldown_holdings": cooldown_holdings,
+        }
 
     def update_position(self, pos_id: int, **kwargs):
         sets = ", ".join(f"{k} = ?" for k in kwargs)
