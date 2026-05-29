@@ -41,7 +41,7 @@ schedule:
   market_open: "09:30"
   market_close: "16:00"
   prep_minutes_before_open: 5
-  scan_interval_minutes: 60
+  macro_refresh_interval_hours: 4   # intraday macro re-assessment cadence (replaces old hourly full cycle)
   rerank_interval_minutes: 1
   shortlist_size: 80
 

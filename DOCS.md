@@ -15,7 +15,7 @@
 - Update when: scoring logic/weights/indicators change, macro/economic logic changes (macro section), data source or provider changes (step 1)
 
 ### [WORKFLOW.md](WORKFLOW.md)
-**Detailed execution workflow.** Complete flow from launch through every scheduled job. Covers initialization, pre-market prep, full trading cycles, re-rank cycles, position monitoring, shutdown, single-run modes (`--once`, `--dry-run`, `--dashboard`), timing summary for a full trading day. Includes API providers per step, rate limits and throttling, caching layers, and daily API call estimates by provider.
+**Detailed execution workflow.** Complete flow from launch through every scheduled job. Covers initialization, pre-market prep, the 4-hourly macro refresh, the 1-minute rebalance cycle and its shared trade-decision block, shutdown, single-run modes (`--once`, `--dry-run`, `--dashboard`), timing summary for a full trading day. Includes API providers per step, rate limits and throttling, caching layers, and daily API call estimates by provider.
 - Update when: schedule/job timing/rate limits change (timing summary, rate limits, daily estimates), data source or provider changes (API providers/calls)
 
 ### [ALPACA_COMPLIANCE.md](ALPACA_COMPLIANCE.md)

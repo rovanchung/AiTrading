@@ -114,31 +114,23 @@ For each candidate, compute 4 sub-scores (each 0–100):
 
 ---
 
-#### B. Full Trading Cycle — Hourly at 10:00 AM through 3:00 PM, Mon-Fri
+#### B. Macro Refresh — Every 4 Hours during market hours, Mon-Fri
 
-**Purpose:** Full universe re-scan + trade execution. Runs 6 times per day.
+**Purpose:** Keep the macro overlay current. This **replaced** the old hourly full-universe re-scan — the shortlist is now built once at pre-market prep (Cycle A) and the 1-minute rebalance cycle (Cycle C) does all trading. Cadence is `schedule.macro_refresh_interval_hours` (default 4); with a 9:30 open / 16:00 close it fires at **10:00 and 14:00 ET**.
 
-**Step B1: Market Check**
-- Query Alpaca API: is market open?
-- If closed, skip entire cycle
-- **APIs:** Alpaca — **1 call** (market clock)
+- Re-assess macro (same indicators and outputs as Step A2) and push adjustments to `PortfolioManager`
+- The assessment self-caches (4h TTL), so a fire landing inside a live cache is a cheap no-op
+- **APIs:** **0 calls** (cache fresh) or **5 calls** (^VIX, ^TNX, ^IRX, 11 sector ETFs batch, SPY — same as Step A2)
 
-**Step B2: Screen** — same as step A3 (full ~503 universe, fresh filters)
-- **APIs:** Alpaca → yfinance — **2 calls** (1 batch OHLCV + 1 SPY)
+**Cycle B total:** 0–5 API calls, ~2×/day.
 
-**Step B3: Analyze** — same as step A4 (all passing candidates)
-- **APIs:** Alpaca news ~N, Finnhub 0–N (usually 0, cached 80 days)
+> The full universe screen → analyze → evaluate → execute pipeline (`run_full_cycle`) is **no longer scheduled**. It still runs for `--once` and as the bootstrap fallback in Cycle C when no shortlist is cached yet.
 
-**Step B4: Macro Refresh**
-- Re-assess macro only if cached assessment has expired (4-hour TTL)
-- Update portfolio manager adjustments if changed
-- **APIs:** **0 calls** (cache fresh) or **5 calls** (if expired, same as step A2)
+---
 
-**Step B5: Update Shortlist** — same as step A5 (no API calls)
+#### Shared Trade-Decision Block — Atomic Evaluate + Execute (holds trade lock)
 
-**Step B6: Atomic Evaluate + Execute** (holds trade lock)
-
-This is the core trading decision block. The trade lock prevents concurrent access between cycles.
+Run by Cycle C every minute (and by `run_full_cycle` for `--once` / the no-shortlist fallback). The trade lock prevents concurrent access between cycles.
 
 1. **Sync pending orders** (`orchestrator/pipeline.py → _sync_pending_orders`):
    - Check all DB pending buy orders against Alpaca status
@@ -149,7 +141,7 @@ This is the core trading decision block. The trade lock prevents concurrent acce
 1b. **Cancel stale pending orders** (`orchestrator/pipeline.py → _cancel_stale_pending_orders`):
    - Any order still open on Alpaca is by definition leftover from a prior cycle (limit buy whose price moved, slow-filling sell, etc.)
    - Cancel each one so the current redistribution is free to re-score, re-price, and re-submit without the old order blocking the ticker
-   - After cancellation, the pending-order map is treated as empty for the rest of Step B6 (no filter skips, cash guard reserves nothing for pending buys)
+   - After cancellation, the pending-order map is treated as empty for the rest of this block (no filter skips, cash guard reserves nothing for pending buys)
 
 2. **Get account state** from Alpaca (portfolio value, cash) — **API: Alpaca** (account)
 3. **Get live positions** from Alpaca (with avg_entry cost basis) — **API: Alpaca** (positions)
@@ -199,9 +191,7 @@ This is the core trading decision block. The trade lock prevents concurrent acce
 
 8. **Retry logic:** If the cycle fails (network error, API timeout, etc.), retry every 30 seconds until a 12-minute deadline is reached.
 
-**Step B6 subtotal:** Alpaca **2 + T orders** (1 account + 1 positions + T orders)
-
-**Cycle B total:** ~N+5+T API calls typical (1 clock + 2 OHLCV + N news + 1 account + 1 positions + T orders; macro 0 if cached)
+**Trade-decision subtotal:** Alpaca **2 + T** (1 account + 1 positions + T orders).
 
 ---
 
@@ -214,7 +204,7 @@ Interval is set by `schedule.rerank_interval_minutes` (default 10, currently 1).
 1. If no shortlist cached yet, run full cycle instead (if market open)
 2. Re-fetch OHLCV data for shortlist only (~80 tickers) — **APIs:** Alpaca → yfinance — **2 calls** (1 batch OHLCV + 1 SPY)
 3. Re-score all shortlist tickers — **APIs:** Alpaca news **~80 calls** (1/ticker), Finnhub **~0** (cached 80 days)
-4. Atomic evaluate + execute (same as step B6) — **APIs:** Alpaca **2+T calls** (1 account + 1 positions + T orders)
+4. Atomic evaluate + execute (the shared trade-decision block above) — **APIs:** Alpaca **2+T calls** (1 account + 1 positions + T orders)
 
 **Per cycle:** ~84+T API calls typical (2 OHLCV + ~80 news + 2 account/positions + T orders). Runs ~390 times/day.
 
@@ -236,7 +226,7 @@ Interval is set by `schedule.rerank_interval_minutes` (default 10, currently 1).
 Runs the full pipeline once and exits:
 1. Initialization (same as continuous)
 2. Pre-market prep (universe + macro + screen + score)
-3. Full trading cycle with execution (step B6)
+3. Full trading cycle with execution (`run_full_cycle` → the shared trade-decision block)
 4. Shutdown
 
 ### `--dry-run` (analysis only)
@@ -264,13 +254,11 @@ Launches read-only monitoring dashboard:
 ```
  9:25 AM  Pre-market prep (universe + macro + screen + analyze + cache shortlist)
  9:30 AM  Market open
- 9:31     Rebalance cycle (profit check + redistribution)
-   ...    (every 1 min)
- 9:59     Rebalance cycle
-10:00 AM  Full trading cycle (full universe re-scan + rebalance)
-10:01     Rebalance cycle
-   ...    (full cycles hourly, rebalance every 1 min between)
- 3:00 PM  Last full trading cycle
+ 9:31     Rebalance cycle (re-score shortlist + profit sells + redistribution)
+   ...    (every 1 min, all day — does all trading)
+10:00 AM  Macro refresh (push updated overlay to PortfolioManager)
+   ...    (rebalance continues every 1 min)
+ 2:00 PM  Macro refresh
    ...
  3:59     Last rebalance cycle
  4:00 PM  Market close
@@ -283,9 +271,9 @@ Assumes ~100 candidates pass screening, ~80 shortlist, ~10 trades/day. Rebalance
 | Cycle | Frequency | Alpaca calls | Finnhub calls | yfinance calls | Total |
 |-------|-----------|-------------|---------------|----------------|-------|
 | A. Pre-Market Prep | 1×/day | ~102 (2 OHLCV + ~100 news) | ~0 (cached) | ~5 (index tickers) | ~107 |
-| B. Full Trading | 6×/day | ~624 (6 × [1 clock + 2 OHLCV + ~100 news + 2 acct/pos]) | ~0 | 0–5 (macro if expired) | ~629 |
+| B. Macro Refresh | ~2×/day | 0 | 0 | 0–5 (only if cache expired) | 0–10 |
 | C. Rebalance | ~390×/day (1 min) | ~32,760 (390 × [2 OHLCV + ~80 news + 2 acct/pos]) | ~0 | ~0 | ~32,760 |
-| **Daily total** | | **~33,486** | **~0** | **~5–10** | **~33,496** |
+| **Daily total** | | **~32,862** | **~0** | **~10–15** | **~32,877** |
 
 Notes:
 - Alpaca free tier allows 200 req/min (~288,000/day) — daily usage is well within limits

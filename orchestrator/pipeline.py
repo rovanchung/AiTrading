@@ -160,8 +160,30 @@ class TradingPipeline:
             f"shortlist={len(self._shortlist)} ({time.time() - t0:.1f}s) ==="
         )
 
+    def run_macro_refresh(self):
+        """Re-assess the macro regime and push adjustments to the portfolio manager.
+
+        Scheduled every few hours during market hours (the intraday cycle no longer
+        re-screens/re-analyzes the full universe). The shortlist is built once at
+        pre-market prep and the 1-minute rerank cycle handles all trading; this job
+        only keeps the macro-driven buy threshold / position / cash-reserve / sector
+        adjustments current. The macro assessment self-caches (4h TTL), so calling
+        this more often than the cache life is a cheap no-op.
+        """
+        if not self.macro:
+            logger.info("Macro overlay disabled, skipping macro refresh")
+            return
+
+        logger.info("=== MACRO REFRESH ===")
+        macro = self.macro.get_macro_assessment()
+        self.portfolio_mgr.set_macro_adjustments(macro.get("adjustments"))
+        self.alerts.macro_update(macro)
+
     def run_full_cycle(self, deadline_minutes=12):
         """Run the complete scan → analyze → trade pipeline with retry until deadline.
+
+        Used by ``--once`` and as the no-shortlist bootstrap fallback in
+        ``run_rerank_cycle``; it is no longer on the intraday schedule.
 
         Args:
             deadline_minutes: Max minutes to retry if cycle fails (default 12, for XX:28 to XX:40).

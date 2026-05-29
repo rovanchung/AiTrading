@@ -27,12 +27,16 @@ class TradingScheduler:
         self.broker = AlpacaClient(config)
         self.alerts = AlertManager()
         self.order_mgr = OrderManager(config, db, self.broker)
-        self.pipeline = TradingPipeline(config, db, self.broker, self.order_mgr, self.alerts)
+        self.pipeline = TradingPipeline(
+            config, db, self.broker, self.order_mgr, self.alerts
+        )
 
     def setup_jobs(self):
         """Register all scheduled jobs."""
         sc = self.config.schedule
-        open_hour, open_min = [int(x) for x in sc.get("market_open", "09:30").split(":")]
+        open_hour, open_min = [
+            int(x) for x in sc.get("market_open", "09:30").split(":")
+        ]
         close_hour = int(sc.get("market_close", "16:00").split(":")[0])
         prep_minutes = sc.get("prep_minutes_before_open", 5)
 
@@ -44,23 +48,36 @@ class TradingScheduler:
             prep_hour -= 1
         self.scheduler.add_job(
             self.pipeline.pre_market_prep,
-            CronTrigger(day_of_week="mon-fri", hour=prep_hour, minute=prep_min, timezone="US/Eastern"),
+            CronTrigger(
+                day_of_week="mon-fri",
+                hour=prep_hour,
+                minute=prep_min,
+                timezone="US/Eastern",
+            ),
             id="pre_market",
             name="Pre-market prep",
             misfire_grace_time=300,
         )
 
-        # Full trading cycle: hourly from 10 AM to 3 PM
+        # Macro refresh: every N hours during market hours (replaces the old
+        # hourly full cycle). The shortlist is built once at pre-market prep and
+        # the 1-minute rerank cycle does all trading; this only keeps the macro
+        # overlay current. run_full_cycle still serves --once and the rerank
+        # no-shortlist fallback.
+        macro_interval = sc.get("macro_refresh_interval_hours", 4)
+        macro_hours = ",".join(
+            str(h) for h in range(open_hour + 1, close_hour, max(1, macro_interval))
+        ) or str(open_hour + 1)
         self.scheduler.add_job(
-            self.pipeline.run_full_cycle,
+            self.pipeline.run_macro_refresh,
             CronTrigger(
                 day_of_week="mon-fri",
-                hour=f"{open_hour + 1}-{close_hour - 1}",
+                hour=macro_hours,
                 minute=0,
                 timezone="US/Eastern",
             ),
-            id="full_cycle",
-            name="Full scan-analyze-trade cycle",
+            id="macro_refresh",
+            name=f"Macro refresh (every {macro_interval}h)",
             misfire_grace_time=300,
         )
 
@@ -79,7 +96,10 @@ class TradingScheduler:
                 max_instances=1,
             )
         else:
-            offsets = sorted((rerank_interval * i - 1) % 60 for i in range(1, 60 // rerank_interval + 1))
+            offsets = sorted(
+                (rerank_interval * i - 1) % 60
+                for i in range(1, 60 // rerank_interval + 1)
+            )
             minutes = ",".join(str(m) for m in offsets)
             self.scheduler.add_job(
                 self.pipeline.run_rerank_cycle,
@@ -115,6 +135,7 @@ class TradingScheduler:
         try:
             while True:
                 import time
+
                 time.sleep(1)
         except (KeyboardInterrupt, EOFError):
             pass
