@@ -135,11 +135,30 @@ def score_radar(ticker):
 
 @api_bp.route("/price-history/<ticker>")
 def price_history(ticker):
-    """Price snapshots for a ticker."""
+    """Observed-price history for a ticker, built from existing data only.
+
+    Two sources are merged (no new data is stored):
+      * `orders` — every filled buy/sell gives the market price at that instant
+        (`filled_price` @ `filled_at`); this is the dense intraday series.
+      * `daily_holding_prices` — one close per day the ticker was held, which
+        bridges days with no trades. Its date is pinned to end-of-day so it
+        sorts after that day's fills.
+
+    The legacy `price_snapshots` table is written only by the deprecated
+    PositionMonitor and is empty in the active v3/v4 databases, so it is unused.
+    """
+    t = ticker.upper()
     rows = query(
-        "SELECT snapshot_time, price FROM price_snapshots "
-        "WHERE ticker = ? ORDER BY snapshot_time ASC",
-        (ticker.upper(),),
+        "SELECT snapshot_time, price FROM ("
+        "  SELECT filled_at AS snapshot_time, filled_price AS price "
+        "  FROM orders "
+        "  WHERE ticker = ? AND status = 'filled' "
+        "    AND filled_price IS NOT NULL AND filled_at IS NOT NULL "
+        "  UNION ALL "
+        "  SELECT date || ' 23:59:59' AS snapshot_time, last_price AS price "
+        "  FROM daily_holding_prices WHERE ticker = ?"
+        ") ORDER BY snapshot_time ASC",
+        (t, t),
     )
     return jsonify(
         {

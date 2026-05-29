@@ -36,10 +36,17 @@ def detail(ticker):
         (ticker,),
     )
 
-    # Score history (last 20)
+    # Score history. Scores are re-recorded every rebalance cycle (~1/min), so a
+    # plain "latest N rows" spans only the last N minutes and renders as a flat
+    # line. Collapse consecutive identical composite scores to their change-points
+    # so the chart shows the real evolution over time, then keep the most recent.
     score_history = query(
-        "SELECT scored_at, composite_score FROM scores WHERE ticker = ? "
-        "ORDER BY scored_at DESC LIMIT 20",
+        "SELECT scored_at, composite_score FROM ("
+        "  SELECT scored_at, composite_score, "
+        "         LAG(composite_score) OVER (ORDER BY scored_at) AS prev "
+        "  FROM scores WHERE ticker = ?"
+        ") WHERE prev IS NULL OR composite_score <> prev "
+        "ORDER BY scored_at DESC LIMIT 40",
         (ticker,),
     )
     score_history.reverse()
