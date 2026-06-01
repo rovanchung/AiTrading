@@ -36,13 +36,14 @@ class OrderManager:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 if signal.action == "buy":
-                    # Use limit order slightly above current price to ensure fill
-                    limit_price = round(current_price * 1.001, 2)
-                    result = self.broker.submit_limit_order(
-                        signal.ticker, signal.suggested_qty, "buy", limit_price
+                    # Market order for immediate fill. A limit priced off the
+                    # last bar close used to rest unfilled when the quote moved,
+                    # spinning a cancel→resubmit loop; the liquid S&P-500 universe
+                    # plus the cash slippage buffer make market fills safe.
+                    result = self.broker.submit_market_order(
+                        signal.ticker, signal.suggested_qty, "buy"
                     )
-                    order.order_type = "limit"
-                    order.limit_price = limit_price
+                    order.order_type = "market"
                 else:
                     # Use close_position for sells — prevents accidental shorts
                     result = self.broker.close_position(

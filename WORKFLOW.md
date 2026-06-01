@@ -138,16 +138,17 @@ Run by Cycle C every minute (and by `run_full_cycle` for `--once` / the no-short
    - If canceled/expired/rejected: mark order as canceled in DB
    - Return map of currently open orders on Alpaca
 
-1b. **Cancel stale pending orders** (`orchestrator/pipeline.py → _cancel_stale_pending_orders`):
-   - Any order still open on Alpaca is by definition leftover from a prior cycle (limit buy whose price moved, slow-filling sell, etc.)
-   - Cancel each one so the current redistribution is free to re-score, re-price, and re-submit without the old order blocking the ticker
-   - After cancellation, the pending-order map is treated as empty for the rest of this block (no filter skips, cash guard reserves nothing for pending buys)
+1b. **Keep pending orders (no blanket cancel):**
+   - Orders are **market** orders, so they normally fill within the cycle and rarely survive to the next one. Any that do are left in place rather than cancelled.
+   - Protective exit sells (`loss_cut*` / `profit_take*` / `no_longer_qualifies`) must be allowed to fill — cancelling them was what let the same shares churn into repeated phantom loss-cuts.
+   - An in-flight redistribution order is "counted" by the same-side pending skip in the execute step (the ticker isn't re-submitted while its order is open); any target-qty drift self-corrects once the order fills.
 
 2. **Get account state** from Alpaca (portfolio value, cash) — **API: Alpaca** (account)
 3. **Get live positions** from Alpaca (with avg_entry cost basis) — **API: Alpaca** (positions)
 3b. **Reconcile positions to Alpaca** (`core/database.py → reconcile_positions`):
    - Insert open rows for tickers Alpaca holds but the DB doesn't; update drifted qty/cost; close orphans Alpaca no longer holds
    - **Cooldown drift guard:** an untracked Alpaca holding for a name still on cooldown is an unwanted re-entry (a position can only become untracked-and-cooled by being re-bought after a profit/loss sell). It is **not** tracked; its ticker is returned and the pipeline flattens it (`_flatten_cooldown_fill`).
+   - **Pending-sell guard:** a name whose exit sell is still in flight is left alone — neither re-tracked nor flattened — so the order can complete. Alpaca keeps showing the shares until the market sell fills, but the DB row was already closed when the exit was issued; re-tracking it would reset `entry_time` and re-arm the loss-cut that triggered the exit. Checked **before** the cooldown guard, and applied on the `sync_local_state` drift path too.
 4. **Save portfolio snapshot** to DB (value, cash, invested, peak)
 
 5. **Step 1 — Profit-based sells** (`portfolio/manager.py → _profit_based_sells`):
@@ -159,7 +160,7 @@ Run by Cycle C every minute (and by `run_full_cycle` for `--once` / the no-short
 
 6. **Step 2 — Score-based redistribution** (`portfolio/manager.py → _redistribute`):
    - Filter scored candidates to those with composite >= macro-adjusted `buy_threshold`
-   - Exclude tickers in cooldown, and never re-arm a cooled-down name even via the recently-cancelled in-flight retry path (cooldown is subtracted explicitly, not only via the already-handled set)
+   - Exclude tickers in cooldown (cooldown is subtracted explicitly, not only via the already-handled set)
    - Calculate proportional allocation: `target_pct = score / total_qualifying_scores`
    - Available capital = `purchase_power_pct` (config, default 50%) × portfolio value
    - For each qualifying stock: compute target qty → sell excess or buy deficit
@@ -168,10 +169,11 @@ Run by Cycle C every minute (and by `run_full_cycle` for `--once` / the no-short
 **Cooldown enforcement** (prevents the loss-cut → rebuy loop):
    - A name sold via `profit_take*` / `loss_cut*` is on cooldown for `cooldown_hours` (`db.get_recently_profit_sold`).
    - The cooldown is enforced at **three** points, because a position can be (re)opened by more than just new signals:
-     1. **Signal generation** (`_redistribute`) — cooled-down names aren't proposed for buying (incl. the in-flight retry path).
-     2. **Pending-buy fills** (`_reconcile_pending_buys`) — a limit buy placed pre-exit that fills post-exit is flattened, not tracked.
-     3. **Alpaca drift reconcile** (`reconcile_positions`) — a stray untracked holding of a cooled-down name is flattened, not tracked.
-   - Why three: buys are **limit** orders (`current_price × 1.001`) that can rest and fill on a later cycle, so a fill can arrive after the name was already exited and cooled. Gating only signal generation (the historical behavior) let those late fills silently re-open the position and spin a rapid sell→rebuy loop. Flattening at the open paths closes that gap.
+     1. **Signal generation** (`_redistribute`) — cooled-down names aren't proposed for buying.
+     2. **Pending-buy fills** (`_reconcile_pending_buys`) — a buy placed pre-exit that fills post-exit is flattened, not tracked.
+     3. **Alpaca drift reconcile** (`reconcile_positions` / `sync_local_state`) — a stray untracked holding of a cooled-down name is flattened, not tracked.
+   - Why three: a buy can fill after the name was already exited and cooled (an order that didn't fill the same cycle, or external drift). Gating only signal generation (the historical behavior) let those late fills silently re-open the position and spin a rapid sell→rebuy loop. Flattening at the open paths closes that gap.
+   - **Separate from cooldown**, the *pending-sell guard* (above) stops the open paths re-tracking a name whose own exit sell is still in flight — that, not a re-buy, was the source of the repeated same-entry/same-exit phantom loss-cuts.
 
 7. **Cash guard** (`orchestrator/pipeline.py → _apply_cash_guard`, when `cash_only: true`):
    - Budget = `account.cash` + estimated sell proceeds − value reserved by pending buys (each adjusted by `cash_slippage_buffer`)

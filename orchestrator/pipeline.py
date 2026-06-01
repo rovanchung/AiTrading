@@ -375,11 +375,18 @@ class TradingPipeline:
 
         db_by_ticker = {p.ticker: p for p in self.db.get_open_positions()}
         alpaca_by_ticker = {p["ticker"]: p for p in alpaca_positions}
+        # Tickers whose exit sell is still in flight: Alpaca keeps showing the
+        # shares until it fills. Don't re-open such a position — that would
+        # reset entry_time and re-arm the loss-cut that triggered the exit;
+        # let the pending sell complete.
+        pending_sell_tickers = {o["ticker"] for o in self.db.get_pending_sell_orders()}
 
         added, closed, qty_updated = [], [], []
 
         for ticker, ap in alpaca_by_ticker.items():
             if ticker in db_by_ticker:
+                continue
+            if ticker in pending_sell_tickers:
                 continue
             entry = ap["avg_entry"]
             current = ap.get("current_price") or entry
@@ -622,52 +629,6 @@ class TradingPipeline:
                 except Exception as e:
                     logger.warning(f"Failed to cancel order {order['order_id']}: {e}")
 
-    def _cancel_stale_pending_orders(
-        self, pending_orders: dict[str, list[dict]]
-    ) -> tuple[int, set[str]]:
-        """Cancel every leftover pending order so the next cycle can redistribute.
-
-        Limit buys from a prior cycle sit with stale prices and block the current
-        redistribution (the signal filter in `_atomic_evaluate_and_execute` skips
-        tickers with same-side pending orders). Cancelling them up-front lets the
-        current cycle re-score and re-submit at current prices.
-
-        Returns (cancelled_count, cancelled_buy_tickers). The buy-side tickers
-        are passed back to portfolio evaluation so the hysteresis floor still
-        applies on retry — without that, a small score dip between submit and
-        cancel would orphan the entry.
-        """
-        if not pending_orders:
-            return 0, set()
-
-        cancelled = 0
-        cancelled_buy_tickers: set[str] = set()
-        for ticker, orders in pending_orders.items():
-            for o in orders:
-                try:
-                    self.broker.cancel_order(o["order_id"])
-                    logger.info(
-                        f"Cancelled stale {o['side']} order for {ticker} "
-                        f"(qty={o['qty']}) to free it for redistribution"
-                    )
-                    cancelled += 1
-                    if "buy" in o["side"].lower():
-                        cancelled_buy_tickers.add(ticker)
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to cancel stale order {o['order_id']} for {ticker}: {e}"
-                    )
-
-        if cancelled:
-            logger.info(
-                f"Cancelled {cancelled} stale pending order(s); "
-                f"reconciling DB before redistribution"
-            )
-            self._reconcile_pending_buys()
-            self._reconcile_pending_sells()
-
-        return cancelled, cancelled_buy_tickers
-
     def _atomic_evaluate_and_execute(self, scored, data: dict):
         """Atomically get positions, evaluate signals, and execute trades.
 
@@ -675,19 +636,19 @@ class TradingPipeline:
         from the position monitor or rescore jobs.
         """
         with self._trade_lock:
-            # Sync pending orders from Alpaca, then cancel any leftover orders
-            # from prior cycles so the current redistribution is unconstrained.
+            # Sync pending orders from Alpaca (reconcile fills/cancels) and get
+            # the map of orders still open. With market orders these rarely
+            # survive a cycle, so we no longer blanket-cancel them: protective
+            # exits must be left to fill, and any in-flight redistribution order
+            # is "counted" by the same-side pending skip below (no duplicate
+            # submission) — target-qty drift self-corrects once it fills.
             pending_orders = self._sync_pending_orders()
             # Reconcile any drift between local positions and Alpaca's view
             # (external trades, manual UI edits, post-reset hydration).
             self.sync_local_state()
-            cancelled_count, cancelled_buy_tickers = self._cancel_stale_pending_orders(
-                pending_orders
-            )
-            if cancelled_count > 0:
-                # Treat state as clean: cash_guard reserves no pending value and
-                # the signal filter below won't skip any ticker.
-                pending_orders = {}
+            # No prior-cycle buys were cancelled (we don't cancel anymore), so
+            # the in-flight hysteresis retry path stays dormant.
+            cancelled_buy_tickers: set[str] = set()
             pending_buy_tickers = {
                 t
                 for t, orders in pending_orders.items()
@@ -711,9 +672,14 @@ class TradingPipeline:
             # decisions are made. Catches any drift caused by missed fills,
             # external manual trades, or app restarts mid-execution. Pass the
             # cooldown set so a stray holding of a just-exited name is flagged
-            # for flattening rather than re-tracked (cooldown enforcement).
+            # for flattening rather than re-tracked (cooldown enforcement), and
+            # the pending-sell set so a name whose exit order is still in flight
+            # is left alone — re-tracking it would reset entry_time and re-arm
+            # the loss-cut that triggered the exit.
             cooldown_tickers = self._cooldown_tickers()
-            recon = self.db.reconcile_positions(alpaca_positions, cooldown_tickers)
+            recon = self.db.reconcile_positions(
+                alpaca_positions, cooldown_tickers, pending_sell_tickers
+            )
             if recon["inserted"] or recon["updated"] or recon["closed"]:
                 logger.info(
                     f"Position reconcile: +{recon['inserted']} new, "

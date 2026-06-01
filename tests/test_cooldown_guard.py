@@ -65,6 +65,65 @@ def test_reconcile_inserts_normally_without_cooldown(db):
     assert {p.ticker for p in db.get_open_positions()} == {"AAPL"}
 
 
+# --- Pending-sell path: don't re-open a holding mid-exit ---------------------
+
+
+def test_reconcile_skips_holding_with_pending_sell(db):
+    # Alpaca still shows the shares because the market exit sell hasn't filled
+    # yet; the DB position was already closed when the exit was issued. Don't
+    # re-track it (which would reset entry_time and re-arm the loss-cut).
+    alpaca = [{"ticker": "DAL", "qty": 21, "avg_entry": 83.0, "current_price": 80.9}]
+    recon = db.reconcile_positions(alpaca, pending_sell_tickers={"DAL"})
+    assert recon["inserted"] == 0
+    assert recon["cooldown_holdings"] == []  # not flagged for flatten either
+    assert {p.ticker for p in db.get_open_positions()} == set()
+
+
+def test_reconcile_pending_sell_precedes_cooldown(db):
+    # A just-loss-cut name is both on cooldown and has an in-flight exit sell.
+    # Pending-sell wins: skip entirely rather than flatten — the sell already
+    # working would otherwise be double-submitted.
+    _cooled_position(db, ticker="DAL", reason="loss_cut (-2.58%)")
+    alpaca = [{"ticker": "DAL", "qty": 21, "avg_entry": 83.0, "current_price": 80.9}]
+    recon = db.reconcile_positions(
+        alpaca, cooldown_tickers={"DAL"}, pending_sell_tickers={"DAL"}
+    )
+    assert recon["inserted"] == 0
+    assert recon["cooldown_holdings"] == []
+
+
+# --- Drift path: sync_local_state --------------------------------------------
+
+
+def _pipeline_for_sync(alpaca_positions, open_positions, pending_sell_orders):
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.broker = MagicMock()
+    p.broker.get_positions.return_value = alpaca_positions
+    p.broker.get_account.return_value = {"portfolio_value": 10000.0, "cash": 5000.0}
+    p.db.get_open_positions.return_value = open_positions
+    p.db.get_pending_sell_orders.return_value = pending_sell_orders
+    p.db.get_stock_sector.return_value = "Industrials"
+    p.db.get_peak_value.return_value = 10000.0
+    return p
+
+
+def test_sync_local_state_skips_reopen_with_pending_sell():
+    alpaca = [{"ticker": "DAL", "qty": 21, "avg_entry": 83.0, "current_price": 80.9}]
+    p = _pipeline_for_sync(alpaca, [], [{"ticker": "DAL"}])
+    summary = p.sync_local_state()
+    assert summary["added"] == []
+    p.db.save_position.assert_not_called()
+
+
+def test_sync_local_state_inserts_without_pending_sell():
+    alpaca = [{"ticker": "DAL", "qty": 21, "avg_entry": 83.0, "current_price": 80.9}]
+    p = _pipeline_for_sync(alpaca, [], [])
+    summary = p.sync_local_state()
+    assert summary["added"] == ["DAL qty=21 @ $83.00"]
+    p.db.save_position.assert_called_once()
+
+
 # --- Fill path: _reconcile_pending_buys --------------------------------------
 
 

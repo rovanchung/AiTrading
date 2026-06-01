@@ -63,10 +63,8 @@ class AlpacaClient:
         except Exception as e:
             raise BrokerError(f"Failed to get positions: {e}") from e
 
-    def submit_market_order(
-        self, ticker: str, qty: int, side: str
-    ) -> dict:
-        """Submit a market order (used for sells for immediate execution)."""
+    def submit_market_order(self, ticker: str, qty: int, side: str) -> dict:
+        """Submit a market order (used for buys; sells go through close_position)."""
         try:
             order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
             req = MarketOrderRequest(
@@ -80,7 +78,9 @@ class AlpacaClient:
             return {
                 "order_id": str(order.id),
                 "status": str(order.status),
-                "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
+                "filled_price": (
+                    float(order.filled_avg_price) if order.filled_avg_price else None
+                ),
             }
         except Exception as e:
             raise BrokerError(f"Market order failed for {ticker}: {e}") from e
@@ -118,7 +118,9 @@ class AlpacaClient:
                 "order_id": str(order.id),
                 "status": str(order.status),
                 "filled_qty": int(order.filled_qty) if order.filled_qty else 0,
-                "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
+                "filled_price": (
+                    float(order.filled_avg_price) if order.filled_avg_price else None
+                ),
             }
         except Exception as e:
             raise BrokerError(f"Failed to get order {order_id}: {e}") from e
@@ -130,15 +132,11 @@ class AlpacaClient:
             try:
                 position = self.client.get_open_position(ticker)
             except Exception:
-                raise BrokerError(
-                    f"Cannot sell {ticker}: no open position on Alpaca"
-                )
+                raise BrokerError(f"Cannot sell {ticker}: no open position on Alpaca")
 
             held_qty = abs(int(position.qty))
             if held_qty <= 0:
-                raise BrokerError(
-                    f"Cannot sell {ticker}: position qty is {held_qty}"
-                )
+                raise BrokerError(f"Cannot sell {ticker}: position qty is {held_qty}")
 
             close_qty = min(qty, held_qty)
             if close_qty < qty:
@@ -149,6 +147,7 @@ class AlpacaClient:
 
             # Use Alpaca close_position API — safe, cannot open shorts
             from alpaca.trading.requests import ClosePositionRequest
+
             result = self.client.close_position(
                 ticker,
                 close_options=ClosePositionRequest(qty=str(close_qty)),
@@ -160,9 +159,7 @@ class AlpacaClient:
                 "order_id": str(result.id),
                 "status": str(result.status),
                 "filled_price": (
-                    float(result.filled_avg_price)
-                    if result.filled_avg_price
-                    else None
+                    float(result.filled_avg_price) if result.filled_avg_price else None
                 ),
                 "qty": close_qty,
             }
@@ -176,6 +173,7 @@ class AlpacaClient:
         try:
             from alpaca.trading.requests import GetOrdersRequest
             from alpaca.trading.enums import QueryOrderStatus
+
             req = GetOrdersRequest(status=QueryOrderStatus.OPEN)
             orders = self.client.get_orders(req)
             return [

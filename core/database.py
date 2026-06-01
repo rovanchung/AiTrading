@@ -297,7 +297,10 @@ class Database:
         return [self._row_to_position(r) for r in rows]
 
     def reconcile_positions(
-        self, alpaca_positions: list[dict], cooldown_tickers: set[str] | None = None
+        self,
+        alpaca_positions: list[dict],
+        cooldown_tickers: set[str] | None = None,
+        pending_sell_tickers: set[str] | None = None,
     ) -> dict:
         """Sync local positions table to Alpaca's ground truth.
 
@@ -318,9 +321,18 @@ class Database:
         it. This keeps the cooldown enforced on the drift path, not just at
         signal generation.
 
+        `pending_sell_tickers` (optional): names whose exit (sell) order is
+        still in flight. Alpaca keeps showing the shares until the sell fills,
+        but the DB position was already closed when the exit was issued.
+        Re-inserting it here would reset entry_time and re-arm the loss-cut
+        that triggered the exit, so such a name is skipped entirely (neither
+        tracked nor flattened) — the in-flight sell is left to complete.
+        Checked before cooldown so a just-exited name isn't double-sold.
+
         Returns a counts dict for logging. Only touches rows with status='open'.
         """
         cooldown_tickers = cooldown_tickers or set()
+        pending_sell_tickers = pending_sell_tickers or set()
         local_rows = self.conn.execute(
             "SELECT id, ticker, qty, entry_price FROM positions WHERE status='open'"
         ).fetchall()
@@ -335,6 +347,10 @@ class Database:
         for ticker, ap in alpaca_by_ticker.items():
             local = local_by_ticker.get(ticker)
             if local is None:
+                if ticker in pending_sell_tickers:
+                    # Exit order still in flight — leave the holding alone so
+                    # the pending sell can complete; don't re-track or flatten.
+                    continue
                 if ticker in cooldown_tickers:
                     # Unwanted re-entry of a cooled-down name — don't track it;
                     # let the caller flatten the stray holding.
