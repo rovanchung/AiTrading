@@ -462,6 +462,74 @@ class Database:
         )
         self.conn.commit()
 
+    def find_closed_position_near(
+        self, ticker: str, qty: int, ref_time: datetime, tolerance_seconds: float = 30
+    ):
+        """Return the closed position row for `ticker` with the given `qty`
+        whose exit_time is nearest `ref_time` and within `tolerance_seconds`,
+        else None.
+
+        A position is closed in the same rebalance cycle its exit (sell) order
+        is submitted, so its exit_time lands within a few seconds of that
+        order's submitted_at (only order-retry sleeps separate them). This lets
+        a deferred fill reconcile re-link the real fill price to the position it
+        closed without a stored order_id. Matching on qty as well as time
+        guards against phantom re-open artifacts, where several DB positions of
+        differing size close near in time but map to a single real sell.
+        """
+        rows = self.conn.execute(
+            """SELECT * FROM positions
+               WHERE ticker = ? AND qty = ? AND status = 'closed'
+                 AND exit_price IS NOT NULL
+               ORDER BY exit_time DESC LIMIT 20""",
+            (ticker, qty),
+        ).fetchall()
+        best, best_delta = None, None
+        for r in rows:
+            if not r["exit_time"]:
+                continue
+            try:
+                et = datetime.fromisoformat(r["exit_time"])
+            except (ValueError, TypeError):
+                continue
+            delta = abs((et - ref_time).total_seconds())
+            if delta <= tolerance_seconds and (
+                best_delta is None or delta < best_delta
+            ):
+                best, best_delta = r, delta
+        return best
+
+    def correct_exit_price(self, pos_id: int, fill_price: float) -> bool:
+        """Rewrite a closed position's exit_price/pnl (and its trade_history
+        row) from the real fill price. Used to repair exits that were recorded
+        from a stale OHLCV bar close because the market sell had not filled yet
+        when the position was closed.
+
+        Idempotent: a no-op when exit_price already matches `fill_price`.
+        Returns True if a change was made.
+        """
+        row = self.conn.execute(
+            "SELECT entry_price, qty, exit_price FROM positions WHERE id = ?",
+            (pos_id,),
+        ).fetchone()
+        if row is None or not row["entry_price"] or row["entry_price"] <= 0:
+            return False
+        if row["exit_price"] is not None and abs(row["exit_price"] - fill_price) < 1e-6:
+            return False
+        pnl = (fill_price - row["entry_price"]) * row["qty"]
+        pnl_pct = (fill_price - row["entry_price"]) / row["entry_price"] * 100
+        self.conn.execute(
+            "UPDATE positions SET exit_price = ?, pnl = ? WHERE id = ?",
+            (fill_price, pnl, pos_id),
+        )
+        self.conn.execute(
+            """UPDATE trade_history SET exit_price = ?, pnl = ?, pnl_pct = ?
+               WHERE position_id = ?""",
+            (fill_price, pnl, round(pnl_pct, 2), pos_id),
+        )
+        self.conn.commit()
+        return True
+
     def _row_to_position(self, row) -> Position:
         keys = row.keys() if hasattr(row, "keys") else []
         return Position(
@@ -627,7 +695,8 @@ class Database:
 
     def get_pending_sell_orders(self) -> list[dict]:
         """Get sell orders that haven't been filled or failed yet."""
-        rows = self.conn.execute("""SELECT id, alpaca_order_id, ticker, qty, status
+        rows = self.conn.execute("""SELECT id, alpaca_order_id, ticker, qty, status,
+                      submitted_at
                FROM orders
                WHERE side = 'sell'
                  AND status NOT IN ('filled', 'failed', 'canceled', 'cancelled')

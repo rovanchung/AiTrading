@@ -136,6 +136,7 @@ Run by Cycle C every minute (and by `run_full_cycle` for `--once` / the no-short
    - Check all DB pending buy orders against Alpaca status
    - If filled: create `Position` record in DB — **unless the ticker is on cooldown** (see *Cooldown enforcement* below). A buy submitted before the name was exited can fill *after* a profit/loss sell cooled it; that stray fill is flattened immediately (`_flatten_cooldown_fill`) instead of re-opening the position.
    - If canceled/expired/rejected: mark order as canceled in DB
+   - **Pending-sell fills correct the recorded exit price** (`_reconcile_pending_sells` → `_reconcile_exit_fill`): a full sell closes the DB position at submit time using the stale OHLCV bar close (the market order hasn't filled yet — see Step 8). When the real fill price lands here, it is re-linked to the position it closed (matched by ticker + qty + exit_time ≈ the order's `submitted_at`) and `exit_price`/`pnl` are rewritten in both `positions` and `trade_history` (`db.correct_exit_price`). Without this, a stale bar (e.g. an overnight gap not yet in the bars) leaves a recorded P&L that disagrees with both the real fill and the exit-reason `(%)`.
    - Return map of currently open orders on Alpaca
 
 1b. **Keep pending orders (no blanket cancel):**
@@ -186,7 +187,7 @@ Run by Cycle C every minute (and by `run_full_cycle` for `--once` / the no-short
    - Submit order via `OrderManager` → **API: Alpaca** (order submission)
    - On buy fill: create `Position` record in DB, log transaction
    - On buy accepted (not yet filled): position created later by sync step on next cycle
-   - On full sell: close position in DB, compute P&L, log transaction
+   - On full sell: close position in DB, compute P&L, log transaction. The market sell rarely fills this same instant, so `exit_price` is recorded provisionally from the OHLCV bar close (`order.filled_price or current_price`); the real fill price is reconciled in by Step 1 on a later cycle.
    - On partial sell (redistribution): reduce position qty in DB, log transaction
    - On sell failure (no position on Alpaca): close stale DB position, continue
    - On other failure: trigger alert, continue to next signal

@@ -490,6 +490,11 @@ class TradingPipeline:
                         f"Reconciled filled sell for {db_order['ticker']} "
                         f"@ {fill_price}"
                     )
+                    # The position was closed in the cycle this sell was
+                    # submitted, using the stale OHLCV bar close (the market
+                    # order had not filled yet). Now that the true fill price
+                    # is known, rewrite the position/trade_history exit price.
+                    self._reconcile_exit_fill(db_order, fill_price)
 
                 elif alpaca_status in ("canceled", "cancelled", "expired", "rejected"):
                     self.db.update_order(db_order["id"], status="canceled")
@@ -511,6 +516,31 @@ class TradingPipeline:
                     f"Failed to reconcile sell order {db_order['alpaca_order_id']} "
                     f"for {db_order['ticker']}: {e}"
                 )
+
+    def _reconcile_exit_fill(self, db_order: dict, fill_price):
+        """Correct a closed position's exit price from the real sell fill.
+
+        A full sell closes the DB position at submit time with the stale bar
+        close, since the market order has not filled yet. Once the fill price
+        is known, re-link it to the position it closed (matched by ticker +
+        qty + exit_time ≈ this order's submitted_at) and rewrite exit_price/pnl.
+        """
+        if not fill_price or fill_price <= 0 or not db_order.get("submitted_at"):
+            return
+        try:
+            ref_time = datetime.fromisoformat(db_order["submitted_at"])
+        except (ValueError, TypeError):
+            return
+        pos = self.db.find_closed_position_near(
+            db_order["ticker"], db_order["qty"], ref_time
+        )
+        if pos is None:
+            return  # partial sell or externally-closed name — nothing to fix
+        if self.db.correct_exit_price(pos["id"], fill_price):
+            logger.info(
+                f"Corrected exit price for {db_order['ticker']} "
+                f"(pos {pos['id']}): {pos['exit_price']} -> {fill_price}"
+            )
 
     def _cooldown_tickers(self) -> set[str]:
         """Tickers within their post-exit cooldown window (sold for
