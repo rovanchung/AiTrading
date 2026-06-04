@@ -242,7 +242,10 @@
 {% block scripts %}
 <script>
 $(document).ready(function() {
-    $('#openTable').DataTable({ ...DT_DEFAULTS, order: [[0, 'asc']] });
+    // No time column is shown for open positions, so keep the server's
+    // entry_time DESC order (newest first) instead of forcing alphabetical.
+    $('#openTable').DataTable({ ...DT_DEFAULTS, order: [] });
+    // Closed positions default to most-recent exit first (Exit Time column).
     $('#closedTable').DataTable({ ...DT_DEFAULTS, order: [[12, 'desc']] });
 });
 
