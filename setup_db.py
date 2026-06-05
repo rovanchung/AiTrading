@@ -2,10 +2,11 @@
 """Initialize (or reset) the AiTrading database.
 
 Usage:
-    python setup_db.py --version v3             # init the per-account DB for v3 or v4
-    python setup_db.py --version v3 --reset     # delete the file first, then re-init
-    python setup_db.py --init-all               # non-destructively init every per-account DB (v3, v4)
-    python setup_db.py --reset-all              # reset every per-account DB (v3, v4)
+    python setup_db.py --version v3                 # init the per-account DB for v3 or v4
+    python setup_db.py --version v3 --reset         # delete the file first, then re-init
+    python setup_db.py --version v3 --account real  # init data/trading_v3_real.db
+    python setup_db.py --init-all                   # non-destructively init every per-account DB (v3, v4)
+    python setup_db.py --reset-all                  # reset every per-account DB (v3, v4)
 """
 
 import os
@@ -15,32 +16,37 @@ from core.config import load_config
 from core.database import Database
 
 
-def _reset_one(version):
-    """Delete and re-create schema for one account (or default if version=None)."""
-    config = load_config(version=version)
+def _label(version, account):
+    if version and account:
+        return f" [{version}:{account}]"
+    return f" [{version}]" if version else ""
+
+
+def _reset_one(version, account=None):
+    """Delete and re-create schema for one (version, account) DB."""
+    config = load_config(version=version, account=account)
     path = config.db_path
     if os.path.isfile(path):
         os.remove(path)
         print(f"Deleted {path}")
     db = Database(path)
     db.init_schema()
-    label = f" [{version}]" if version else ""
-    print(f"Database initialized at {path}{label}")
+    print(f"Database initialized at {path}{_label(version, account)}")
     db.close()
 
 
-def _init_one(version):
-    config = load_config(version=version)
+def _init_one(version, account=None):
+    config = load_config(version=version, account=account)
     db = Database(config.db_path)
     db.init_schema()
-    label = f" [{version}]" if version else ""
-    print(f"Database initialized at {config.db_path}{label}")
+    print(f"Database initialized at {config.db_path}{_label(version, account)}")
     db.close()
 
 
 def _all_versions():
     import yaml
     from pathlib import Path
+
     cfg_path = Path(__file__).parent / "config.yaml"
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
@@ -50,6 +56,7 @@ def _all_versions():
 def main():
     args = sys.argv[1:]
     version = None
+    account = None
     do_reset = "--reset" in args
     do_reset_all = "--reset-all" in args
     do_init_all = "--init-all" in args
@@ -57,7 +64,8 @@ def main():
     for i, a in enumerate(args):
         if a == "--version" and i + 1 < len(args):
             version = args[i + 1]
-            break
+        elif a == "--account" and i + 1 < len(args):
+            account = args[i + 1]
 
     if do_init_all:
         for ver in _all_versions():
@@ -77,9 +85,9 @@ def main():
         sys.exit(1)
 
     if do_reset:
-        _reset_one(version)
+        _reset_one(version, account)
     else:
-        _init_one(version)
+        _init_one(version, account)
 
 
 if __name__ == "__main__":

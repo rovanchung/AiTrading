@@ -68,6 +68,30 @@ If `--account` is omitted, credentials are resolved in this order:
 
 Per-account strategy parameters are configured in the `accounts:` section of `config.yaml` — any trading parameter can be overridden per version.
 
+### Live + mirror accounts (v3)
+
+Two extra accounts reuse the full **v3** strategy via per-account overrides
+(`accounts.v3.account_overrides` in `config.yaml`):
+
+| Account | Mode | Routes to | Credentials |
+|---------|------|-----------|-------------|
+| `real`   | **LIVE money** (`paper_trading: false`) | `https://api.alpaca.markets` | `ALPACA_API_KEY_REAL` / `ALPACA_SECRET_KEY_REAL` |
+| `mirror` | Paper shadow (`paper_trading: true`) | `https://paper-api.alpaca.markets` | `ALPACA_API_KEY_MIRROR` / `ALPACA_SECRET_KEY_MIRROR` |
+
+```bash
+./aitrade --version v3 --account real   setup-db   # data/trading_v3_real.db
+./aitrade --version v3 --account mirror setup-db   # data/trading_v3_mirror.db
+./aitrade --version v3 --account real   run &      # LIVE — places real-money orders
+./aitrade --version v3 --account mirror run &      # paper shadow of the same v3 strategy
+```
+
+> ⚠️ **`real` trades with real money.** It is the only config with
+> `paper_trading: false`, so the Alpaca client connects to the live endpoint.
+> Fill `ALPACA_API_KEY_REAL` / `ALPACA_SECRET_KEY_REAL` with **live** Alpaca
+> keys (and `..._MIRROR` with paper keys). Until those keys are set, the account
+> won't start (it raises a clear `ConfigError`). PDT and cash-settlement rules
+> apply to the live account — see [ALPACA_COMPLIANCE.md](ALPACA_COMPLIANCE.md).
+
 ## Web Dashboard
 
 Launch the interactive web dashboard to monitor positions, rankings, orders, and portfolio performance:

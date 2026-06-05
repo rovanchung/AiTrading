@@ -77,6 +77,15 @@ accounts:
     v2_min_hold_minutes: 0
     v2_sell_threshold: 65
     v2_no_longer_qualifies_consecutive: 4   # debounce score-based exits
+    account_overrides:
+      # Two extra Alpaca accounts that reuse the full v3 strategy above.
+      # Select with --account real / --account mirror. Each gets its own
+      # DB (data/trading_v3_{real,mirror}.db), log file, and credential pair
+      # (ALPACA_API_KEY_{REAL,MIRROR} / ALPACA_SECRET_KEY_{REAL,MIRROR}).
+      real:
+        paper_trading: false   # LIVE money — routes to https://api.alpaca.markets
+      mirror:
+        paper_trading: true    # paper shadow running the same v3 strategy
   v4:
     database_path: "data/trading_v4.db"
     v2_profit_take_pct: 0.05
