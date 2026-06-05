@@ -83,7 +83,7 @@
             {% for o in orders %}
             <tr>
                 <td class="text-gray-600 font-mono text-xs">{{ o.id }}</td>
-                <td class="text-gray-500 text-xs">{{ o.submitted_at | shortdate }}</td>
+                <td class="text-gray-500 text-xs" data-order="{{ o.submitted_at or '' }}">{{ o.submitted_at | shortdate }}</td>
                 <td>
                     <a href="/analysis/{{ o.ticker }}" class="text-blue-400 hover:text-blue-300 font-medium">{{ o.ticker }}</a>
                 </td>
@@ -93,7 +93,7 @@
                 <td class="text-right text-gray-400">{{ o.limit_price | currency if o.limit_price else '—' }}</td>
                 <td class="text-right text-gray-300">{{ o.filled_price | currency if o.filled_price else '—' }}</td>
                 <td><span class="badge badge-{{ o.status }}">{{ o.status }}</span></td>
-                <td class="text-gray-500 text-xs">{{ o.filled_at | shortdate if o.filled_at else '—' }}</td>
+                <td class="text-gray-500 text-xs" data-order="{{ o.filled_at or '' }}">{{ o.filled_at | shortdate if o.filled_at else '—' }}</td>
                 <td class="text-red-400/70 text-xs max-w-[150px] truncate" title="{{ o.error_message or '' }}">
                     {{ o.error_message or '' }}
                 </td>

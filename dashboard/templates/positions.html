@@ -217,8 +217,8 @@
                             {{ p.exit_reason or '—' }}
                         </span>
                     </td>
-                    <td class="text-gray-500 text-xs">{{ p.entry_time | shortdate }}</td>
-                    <td class="text-gray-500 text-xs">{{ p.exit_time | shortdate }}</td>
+                    <td class="text-gray-500 text-xs" data-order="{{ p.entry_time or '' }}">{{ p.entry_time | shortdate }}</td>
+                    <td class="text-gray-500 text-xs" data-order="{{ p.exit_time or '' }}">{{ p.exit_time | shortdate }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

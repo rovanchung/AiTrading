@@ -46,7 +46,7 @@
                     <td class="text-right font-mono {{ r.fundamental_score | score_color }}">{{ "%.0f" | format(r.fundamental_score) }}</td>
                     <td class="text-right font-mono {{ r.momentum_score | score_color }}">{{ "%.0f" | format(r.momentum_score) }}</td>
                     <td class="text-right font-mono {{ r.sentiment_score | score_color }}">{{ "%.0f" | format(r.sentiment_score) }}</td>
-                    <td class="text-gray-500 text-xs">{{ r.scored_at | timeago }}</td>
+                    <td class="text-gray-500 text-xs" data-order="{{ r.scored_at or '' }}">{{ r.scored_at | timeago }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
