@@ -748,6 +748,24 @@ def _available_accounts():
     return sorted(api & sec)
 
 
+def _version_override_accounts(version):
+    """Return the account suffixes declared under
+    accounts.<version>.account_overrides in config.yaml, in file order.
+
+    These are the only extra accounts that make sense for the version (each
+    carries its own trading/paper overrides), so the picker is scoped to them
+    rather than to every credential pair in .env.
+    """
+    import yaml
+    try:
+        with open(os.path.join(PROJECT_ROOT, "config.yaml")) as f:
+            cfg = yaml.safe_load(f)
+    except Exception:
+        return []
+    acct = (cfg.get("accounts", {}) or {}).get(version, {}) or {}
+    return list((acct.get("account_overrides", {}) or {}).keys())
+
+
 def menu_version():
     """Select trading strategy version, then optionally a specific account."""
     global ACTIVE_VERSION, ACTIVE_ACCOUNT
@@ -765,13 +783,25 @@ def menu_version():
         return False
     ACTIVE_VERSION = choice
 
-    # Offer account picker so the same version can run against different
-    # Alpaca accounts concurrently (each gets its own DB).
-    accounts = _available_accounts()
-    if accounts:
+    # Offer an account picker scoped to the accounts this version actually
+    # defines (accounts.<version>.account_overrides), so the same version can
+    # run against different Alpaca accounts concurrently (each gets its own
+    # DB). Accounts whose credentials aren't in .env yet are still listed —
+    # flagged so the user knows to fill them in — since selecting one fails
+    # loudly at runtime rather than silently falling back.
+    overrides = _version_override_accounts(choice)
+    if overrides:
+        have_creds = {s.upper() for s in _available_accounts()}
         items = [
             {"label": "Default", "desc": f"Use .env mapping (ALPACA_ACCOUNT_{choice.upper()})", "value": ""},
-        ] + [{"label": s, "desc": f"ALPACA_API_KEY_{s}", "value": s} for s in accounts]
+        ]
+        for s in overrides:
+            su = s.upper()
+            if su in have_creds:
+                desc = f"ALPACA_API_KEY_{su}"
+            else:
+                desc = f"⚠ set ALPACA_API_KEY_{su} / ALPACA_SECRET_KEY_{su} in .env"
+            items.append({"label": s, "desc": desc, "value": s})
         acct = pick_menu(f"Select Alpaca Account for {choice.upper()}", items, back_label="Back")
         if acct is None:
             return False

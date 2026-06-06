@@ -68,10 +68,6 @@ class Config:
         return os.environ["ALPACA_SECRET_KEY"]
 
     @property
-    def alpaca_base_url(self) -> str:
-        return os.environ.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-
-    @property
     def finnhub_api_key(self) -> str:
         return os.environ.get("FINNHUB_API_KEY", "")
 
